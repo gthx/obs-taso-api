@@ -1,183 +1,211 @@
 <script>
-  import { onMount } from 'svelte';
-  import { obsWebSocket, connectionStatus, matchData } from './obsWebSocket.js';
-  
-  let isConnected = false;
-  let retryCount = 0;
-  const maxRetries = 10;
-  
-  // Get password from URL query parameter
-  function getPasswordFromUrl() {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('password') || '';
-  }
-  
-  const password = getPasswordFromUrl();
-  
-  async function connectToOBS() {
-    retryCount++;
-    try {
-      await obsWebSocket.connect('ws://localhost:4455', password);
-      isConnected = true;
-      retryCount = 0; // Reset on successful connection
-      
-      // Load initial match data
-      await obsWebSocket.getMatchData();
-      
-      // Listen for match updates
-      obsWebSocket.addEventListener('CustomEvent', (event) => {
-        if (event.eventData && event.eventData.eventName === 'MatchUpdate') {
-          console.log('Received match update:', event.eventData.eventData);
-        }
-      });
-    } catch (error) {
-      console.error('Failed to connect:', error);
-      
-      if (retryCount < maxRetries) {
-        // Retry connection after a delay
-        setTimeout(connectToOBS, 2000);
-      }
+    import { onMount } from "svelte";
+    import {
+        obsWebSocket,
+        connectionStatus,
+        matchData,
+    } from "./obsWebSocket.js";
+
+    let isConnected = false;
+    let retryCount = 0;
+    const maxRetries = 10;
+
+    // Get password from URL query parameter
+    function getPasswordFromUrl() {
+        const urlParams = new URLSearchParams(window.location.search);
+        return urlParams.get("password") || "";
     }
-  }
-  
-  onMount(() => {
-    connectToOBS();
-    
-    return () => {
-      obsWebSocket.disconnect();
-    };
-  });
+
+    const password = getPasswordFromUrl();
+
+    async function connectToOBS() {
+        retryCount++;
+        try {
+            await obsWebSocket.connect("ws://localhost:4455", password);
+            isConnected = true;
+            retryCount = 0; // Reset on successful connection
+
+            // Load initial match data
+            await obsWebSocket.getMatchData();
+
+            // Listen for match updates
+            obsWebSocket.addEventListener("CustomEvent", (event) => {
+                if (
+                    event.eventData &&
+                    event.eventData.eventName === "MatchUpdate"
+                ) {
+                    console.log(
+                        "Received match update:",
+                        event.eventData.eventData,
+                    );
+                }
+            });
+        } catch (error) {
+            console.error("Failed to connect:", error);
+
+            if (retryCount < maxRetries) {
+                // Retry connection after a delay
+                setTimeout(connectToOBS, 2000);
+            }
+        }
+    }
+
+    onMount(() => {
+        connectToOBS();
+
+        return () => {
+            obsWebSocket.disconnect();
+        };
+    });
 </script>
 
-<div class="overlay-container">
-  {#if $connectionStatus === 'connected' && $matchData}
-    <div class="scoreboard">
-      <div class="team home">
-        <div class="team-name">{$matchData.homeTeam?.name || 'Home'}</div>
-        <div class="score">{$matchData.homeTeam?.score || 0}</div>
-      </div>
-      
-      <div class="match-info">
-        <div class="period">Period {$matchData.period || 1}</div>
-        <div class="time">{$matchData.time || '20:00'}</div>
-      </div>
-      
-      <div class="team away">
-        <div class="team-name">{$matchData.awayTeam?.name || 'Away'}</div>
-        <div class="score">{$matchData.awayTeam?.score || 0}</div>
-      </div>
-    </div>
-  {:else if $connectionStatus === 'disconnected' && retryCount < maxRetries}
-    <div class="connecting">
-      Connecting to OBS... (Attempt {retryCount}/{maxRetries})
-    </div>
-  {/if}
+<div class="scoreboard">
+    {#if $connectionStatus === "connected" && $matchData}
+        <!-- Home team logo on transparent background -->
+
+        <!-- Main scoreboard container -->
+        <div class="main-scoreboard">
+            <div class="team-section home">
+                <img
+                    class="logo home-logo"
+                    src="https://cdn.torneopal.net/logo/salibandy/254x.webp"
+                    alt="Home Logo"
+                />
+                <!-- <div class="team-name">{$matchData.homeTeam?.name}</div> -->
+                <div class="team-score">{$matchData.homeTeam?.score || 0}</div>
+            </div>
+
+            <div class="divider">-</div>
+
+            <div class="team-section away">
+                <img
+                    class="logo away-logo"
+                    src="https://cdn.torneopal.net/logo/salibandy/352x.webp"
+                    alt="Away Logo"
+                />
+                <!-- <div class="team-name">{$matchData.awayTeam?.name}</div> -->
+                <div class="team-score">{$matchData.awayTeam?.score || 0}</div>
+            </div>
+        </div>
+
+        <!-- Away team logo on transparent background -->
+
+        <!-- Period and time hanging below -->
+        <div class="game-info">
+            <span class="period">{$matchData.period || 1}.</span>
+            <span class="time">{$matchData.time || "20:00"}</span>
+        </div>
+    {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}
+        <div class="connecting">
+            Connecting to OBS... (Attempt {retryCount}/{maxRetries})
+        </div>
+    {/if}
 </div>
 
 <style>
-  .overlay-container {
-    position: fixed;
-    top: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    font-family: 'Arial Black', Arial, sans-serif;
-    color: white;
-    text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
-    user-select: none;
-  }
-  
-  .scoreboard {
-    display: flex;
-    align-items: center;
-    gap: 30px;
-    background: linear-gradient(to bottom, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.6));
-    padding: 20px 40px;
-    border-radius: 10px;
-    border: 2px solid rgba(255, 255, 255, 0.2);
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-  }
-  
-  .team {
-    text-align: center;
-    min-width: 150px;
-  }
-  
-  .team-name {
-    font-size: 24px;
-    margin-bottom: 10px;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  
-  .score {
-    font-size: 64px;
-    font-weight: bold;
-    line-height: 1;
-    color: #fff;
-    text-shadow: 
-      3px 3px 6px rgba(0, 0, 0, 0.9),
-      0 0 20px rgba(255, 255, 255, 0.3);
-  }
-  
-  .match-info {
-    text-align: center;
-    padding: 0 20px;
-    border-left: 2px solid rgba(255, 255, 255, 0.3);
-    border-right: 2px solid rgba(255, 255, 255, 0.3);
-  }
-  
-  .period {
-    font-size: 20px;
-    margin-bottom: 8px;
-    color: #ffd700;
-    text-transform: uppercase;
-  }
-  
-  .time {
-    font-size: 32px;
-    font-weight: bold;
-    font-variant-numeric: tabular-nums;
-  }
-  
-  .connecting {
-    background: rgba(0, 0, 0, 0.7);
-    padding: 10px 20px;
-    border-radius: 5px;
-    font-size: 14px;
-    color: #ccc;
-  }
-  
-  /* Animation for score changes */
-  .score {
-    transition: transform 0.3s ease, color 0.3s ease;
-  }
-  
-  .score:active {
-    transform: scale(1.2);
-    color: #ffd700;
-  }
-  
-  /* Responsive adjustments */
-  @media (max-width: 768px) {
     .scoreboard {
-      gap: 20px;
-      padding: 15px 25px;
+        position: fixed;
+        top: 24px;
+        left: 48px;
+        display: flex;
+        align-items: flex-start;
+        gap: 0;
+        font-family: "Arial Black", Arial, sans-serif;
+        color: white;
+        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
+        user-select: none;
+        cursor: none;
     }
-    
+
+    .logo {
+        width: 90px;
+        height: 90px;
+        background: transparent;
+        z-index: 5;
+        filter: drop-shadow(8px 16px 2px rgba(72, 61, 139, 0.5));
+    }
+
+    .away-logo {
+        margin-top: 12px;
+    }
+
+    .main-scoreboard {
+        display: flex;
+        align-items: center;
+        background: linear-gradient(135deg, #6a5acd 0%, #483d8b 100%);
+        height: 70px;
+        top: 20px;
+        padding: 0 20px;
+        border-radius: 8px;
+        position: relative;
+    }
+
+    .team-section {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+
+    .team-section.home {
+        flex-direction: row;
+    }
+
+    .team-section.away {
+        flex-direction: row-reverse;
+    }
+
     .team-name {
-      font-size: 18px;
+        font-size: 28px;
+        font-weight: bold;
+        min-width: 80px;
     }
-    
-    .score {
-      font-size: 48px;
+
+    .team-score {
+        font-size: 48px;
+        font-weight: bold;
+        min-width: 60px;
+        text-align: center;
     }
-    
+
+    .divider {
+        font-size: 36px;
+        font-weight: bold;
+        margin: 0 20px;
+        color: white;
+    }
+
+    .game-info {
+        position: absolute;
+        top: 90px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(127, 127, 127, 0.7);
+        padding: 0 8px 8px;
+        border-radius: 0 0 8px 8px;
+        font-size: 20px;
+        font-weight: bold;
+        text-align: center;
+        min-width: 120px;
+        backdrop-filter: blur(5px);
+    }
+
     .period {
-      font-size: 16px;
+        color: #ffd700;
+        margin-right: 8px;
     }
-    
+
     .time {
-      font-size: 24px;
+        font-variant-numeric: tabular-nums;
     }
-  }
+
+    .connecting {
+        background: rgba(0, 0, 0, 0.7);
+        padding: 10px 20px;
+        border-radius: 5px;
+        font-size: 14px;
+        color: #ccc;
+        position: fixed;
+        top: 20px;
+        left: 20px;
+    }
 </style>
