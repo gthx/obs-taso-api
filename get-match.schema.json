@@ -1,0 +1,259 @@
+{
+    "type": "object",
+    "match": {
+        "type": "object",
+        "properties": {
+            "match_id": {
+                "type": "string"
+            },
+            "match_number": {
+                "type": "string"
+            },
+            "competition_id": {
+                "type": "string"
+            },
+            "competition_name": {
+                "type": "string"
+            },
+            "category_id": {
+                "type": "string"
+            },
+            "category_name": {
+                "type": "string"
+            },
+            "group_id": {
+                "type": "string"
+            },
+            "group_name": {
+                "type": "string"
+            },
+            "round_id": {
+                "type": "string"
+            },
+            "round_name": {
+                "type": "string"
+            },
+            "date": {
+                "type": "string"
+            },
+            "time": {
+                "type": "string"
+            },
+            "sunset": {
+                "type": "string"
+            },
+            "club_A_id": {
+                "type": "string"
+            },
+            "team_A_id": {
+                "type": "string"
+            },
+            "team_A_name": {
+                "type": "string"
+            },
+            "team_A_home_venue_id": {
+                "type": "string"
+            },
+            "club_B_id": {
+                "type": "string"
+            },
+            "team_B_id": {
+                "type": "string"
+            },
+            "team_B_name": {
+                "type": "string"
+            },
+            "status": {
+                "type": "string",
+                "description" : "Planned,Cancelled,Fixture,Live,Break,Played"
+            },
+            "fs_A": {
+                "type": "string",
+                "description" : "Final score for team A"
+            },
+            "fs_B": {
+                "type": "string",
+                "description" : "Final score for team B"
+            },
+            "hts_A": {
+                "type": "string",
+                "description" : "Half time score for team A"
+            },
+            "hts_B": {
+                "type": "string",
+                "description" : "Half time score for team B"
+            },
+            "es_A": {
+                "type": "string",
+                "description" : "Extra time score for team A"
+            },
+            "es_B": {
+                "type": "string",
+                "description" : "Extra time score for team B"
+            },
+            "ps_A": {
+                "type": "string",
+                "description" : "Penalty shootout score for team A"
+            },
+            "ps_B": {
+                "type": "string",
+                "description" : "Penalty shootout score for team B"
+            },
+            "venue_id": {
+                "type": "string"
+            },
+            "venue_name": {
+                "type": "string"
+            },
+            "attendance": {
+                "type": "string"
+            },
+            "referee_1_id": {
+                "type": "string"
+            },
+            "referee_1_name": {
+                "type": "string"
+            },
+            "referee_2_id": {
+                "type": "string"
+            },
+            "referee_2_name": {
+                "type": "string"
+            },
+            "assistant_referee_1_id": {
+                "type": "string"
+            },
+            "assistant_referee_1_name": {
+                "type": "string"
+            },
+            "assistant_referee_2_id": {
+                "type": "string"
+            },
+            "assistant_referee_2_name": {
+                "type": "string"
+            },
+            "referee_observer_id": {
+                "type": "string"
+            },
+            "referee_observer_name": {
+                "type": "string"
+            },
+            "report_result": {
+                "type": "string"
+            },
+            "period_count": {
+                "type": "string",
+                "description" : "Number of periods in the match"
+            },
+            "period_min": {
+                "type": "string",
+                "description" : "Length of a period in minutes"
+            },
+            "extra_period_count": {
+                "type": "string",
+                "description" : "Number of possible extra time periods in the match"
+            },
+            "extra_period_min": {
+                "type": "string",
+                "description" : "Length of an extra time period in minutes"
+            },
+            "live_period": {
+                "type": "string",
+                "description" : "Current period when match is live"
+            },
+            "live_time": {
+                "type": "string",
+                "description" : "Current playing time hh:mm:ss when match is live"
+            },
+            "live_minutes": {
+                "type": "string",
+                "description" : "Current playing minute when match is live, can be eg 45+2 when playing overtime"
+            },
+            "live_timer_start": {
+                "type": "string"
+            },
+            "live_timer_start_time": {
+                "type": "string"
+            },
+            "live_timer_on": {
+                "type": "string"
+            },
+            "temperature": {
+                "type": "string"
+            },
+            "weather": {
+                "type": "string",
+                "description" : "Aurinkoista,Puolipilvistä,Pilvistä,Sadekuuroja,Tihkusadetta,Sadetta,Myrsky,Ukkosmyrsky,Lumi-/räntäsade"
+            },
+
+            "lineups": {
+                "type": "array",
+                "properties": {
+                    "lineup_id": {
+                        "type": "string"
+                    },
+                    "match_id": {
+                        "type": "string"
+                    },
+                    "team_id": {
+                        "type": "string"
+                    },
+                    "player_id": {
+                        "type": "string"
+                    },
+                    "player_name": {
+                        "type": "string"
+                    },
+                    "shirt_number": {
+                        "type": "string"
+                    },
+                    "start": {
+                        "type": "string"
+                    },
+                    "position": {
+                        "type": "string"
+                    },
+                    "position_order": {
+                        "type": "string"
+                    },
+                    "playing_time_min": {
+                        "type": "int"
+                    }
+
+                }
+            },
+            "events": {
+                "type": "array",
+                "properties": {
+                    "event_id": {
+                        "type": "string"
+                    },
+                    "team_id": {
+                        "type": "string"
+                    },
+                    "lineup_id": {
+                        "type": "string"
+                    },
+                    "player_id": {
+                        "type": "string"
+                    },
+                    "player_name": {
+                        "type": "string"
+                    },
+                    "time": {
+                        "type": "string"
+                    },
+                    "code": {
+                        "type": "string",
+                        "description": "one of:vaihto, varoitus, ulosajo, maali, syotto, heitto, paitsio, kulmapotku, laukaus, laukausohi, laukaustolppa, torjunta, rike, vapaapotku"
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "+/- for substition or eg. reason code for booking"
+                    }
+                }
+            }
+
+        }
+    }
+}
