@@ -13,6 +13,12 @@
     let connectionBoxExpanded = $state(false);
     let obsPreviewExpanded = $state(true);
     let showMatchPopup = $state(false);
+    
+    // Score control state
+    let scoreMode = $state("auto"); // "auto" or "manual"
+    let autoScoreInterval = null;
+    let apiScores = $state(null);
+    let isPollingScores = $state(false);
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
@@ -58,6 +64,90 @@
     
     function disconnect() {
         obsWebSocket.disconnect();
+    }
+    
+    // Score control functions
+    function setScoreMode(mode) {
+        scoreMode = mode;
+        localStorage.setItem("score-mode", mode);
+        
+        if (mode === "auto" && matchId) {
+            startScorePolling();
+        } else {
+            stopScorePolling();
+        }
+    }
+    
+    async function startScorePolling() {
+        if (!matchId || !torneopalApiKey || autoScoreInterval) {
+            return;
+        }
+        
+        isPollingScores = true;
+        
+        // Initial score fetch
+        await fetchCurrentScore();
+        
+        // Set up polling interval (5 seconds)
+        autoScoreInterval = setInterval(async () => {
+            await fetchCurrentScore();
+        }, 5000);
+    }
+    
+    function stopScorePolling() {
+        if (autoScoreInterval) {
+            clearInterval(autoScoreInterval);
+            autoScoreInterval = null;
+        }
+        isPollingScores = false;
+    }
+    
+    async function fetchCurrentScore() {
+        if (!matchId || !torneopalApiKey) {
+            return;
+        }
+        
+        try {
+            const result = await torneopalApi.getScore(matchId);
+            if (result && result.score) {
+                apiScores = result.score;
+                
+                // Update scores if in auto mode
+                if (scoreMode === "auto") {
+                    // Only update scores if they have valid values from the API
+                    if (result.score.live_A !== "" && result.score.live_A !== null && result.score.live_A !== undefined) {
+                        const newHomeScore = parseInt(result.score.live_A);
+                        if (!isNaN(newHomeScore)) {
+                            homeTeamScore = newHomeScore;
+                        }
+                    }
+                    
+                    if (result.score.live_B !== "" && result.score.live_B !== null && result.score.live_B !== undefined) {
+                        const newAwayScore = parseInt(result.score.live_B);
+                        if (!isNaN(newAwayScore)) {
+                            awayTeamScore = newAwayScore;
+                        }
+                    }
+                    
+                    // Update period and time if available
+                    if (result.score.live_period && result.score.live_period !== "-1" && result.score.live_period !== "") {
+                        const newPeriod = parseInt(result.score.live_period);
+                        if (!isNaN(newPeriod) && newPeriod > 0) {
+                            period = newPeriod;
+                        }
+                    }
+                    
+                    if (result.score.live_time_mmss && result.score.live_time_mmss !== "" && result.score.live_time_mmss !== "00:00") {
+                        time = result.score.live_time_mmss;
+                    }
+                    
+                    // Update overlay
+                    await updateMatchData();
+                }
+            }
+        } catch (error) {
+            console.error("Failed to fetch current score:", error);
+        }
     }
 
     function copyOverlayUrl() {
@@ -125,6 +215,12 @@
         }
         if (savedPassword) {
             wsPassword = savedPassword;
+        }
+        
+        // Load score mode preference
+        const savedScoreMode = localStorage.getItem("score-mode");
+        if (savedScoreMode) {
+            scoreMode = savedScoreMode;
         }
 
         // Load Torneopal settings
@@ -265,6 +361,11 @@
                 );
             }
         }
+        
+        // Start score polling if in auto mode
+        if (scoreMode === "auto" && matchInfo) {
+            startScorePolling();
+        }
     }
 
     onMount(async () => {
@@ -277,11 +378,11 @@
 
         return () => {
             obsWebSocket.disconnect();
+            stopScorePolling();
         };
     });
 </script>
 
-<div class="admin-container">
     <!-- Torneopal Top Bar -->
     <div class="torneopal-top-bar">
         <div class="top-bar-content">
@@ -398,84 +499,80 @@
         </div>
     {/if}
 
-
-    <div class="match-controls">
-        <h2>Match Information</h2>
-
-        <div class="teams-section">
-            <div class="team home">
-                <h3>Home Team</h3>
-                <input
-                    type="text"
-                    placeholder="Team name"
-                    bind:value={homeTeamName}
-                    onchange={updateMatchData}
-                />
-                <div class="score-control">
-                    <button
+    <!-- Score Controls Section -->
+    {#if matchInfo}
+        <div class="score-controls" class:auto-mode={scoreMode === "auto"}>
+            <div class="score-mode-selector">
+                <span class="score-label">Score:</span>
+                <label class="radio-option">
+                    <input 
+                        type="radio" 
+                        bind:group={scoreMode} 
+                        value="auto"
+                        onchange={() => setScoreMode("auto")}
+                    />
+                    <span class="radio-text">auto</span>
+                </label>
+                <label class="radio-option">
+                    <input 
+                        type="radio" 
+                        bind:group={scoreMode} 
+                        value="manual"
+                        onchange={() => setScoreMode("manual")}
+                    />
+                    <span class="radio-text">manual</span>
+                </label>
+            </div>
+            
+            <div class="score-display">
+                <div class="score-control-group">
+                    <button 
+                        class="score-btn" 
                         onclick={() => decrementScore("home")}
-                        disabled={$connectionStatus !== "connected"}>-</button
-                    >
-                    <span class="score">{homeTeamScore}</span>
-                    <button
+                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    >-</button>
+                    <input 
+                        type="number" 
+                        class="score-input"
+                        class:auto={scoreMode === "auto"}
+                        bind:value={homeTeamScore}
+                        onchange={updateMatchData}
+                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                        min="0"
+                    />
+                    <button 
+                        class="score-btn" 
                         onclick={() => incrementScore("home")}
-                        disabled={$connectionStatus !== "connected"}>+</button
-                    >
+                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    >+</button>
                 </div>
-            </div>
-
-            <div class="team away">
-                <h3>Away Team</h3>
-                <input
-                    type="text"
-                    placeholder="Team name"
-                    bind:value={awayTeamName}
-                    onchange={updateMatchData}
-                />
-                <div class="score-control">
-                    <button
+                
+                <span class="score-separator">-</span>
+                
+                <div class="score-control-group">
+                    <button 
+                        class="score-btn" 
                         onclick={() => decrementScore("away")}
-                        disabled={$connectionStatus !== "connected"}>-</button
-                    >
-                    <span class="score">{awayTeamScore}</span>
-                    <button
+                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    >-</button>
+                    <input 
+                        type="number" 
+                        class="score-input"
+                        class:auto={scoreMode === "auto"}
+                        bind:value={awayTeamScore}
+                        onchange={updateMatchData}
+                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                        min="0"
+                    />
+                    <button 
+                        class="score-btn" 
                         onclick={() => incrementScore("away")}
-                        disabled={$connectionStatus !== "connected"}>+</button
-                    >
+                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    >+</button>
                 </div>
             </div>
         </div>
-
-        <div class="game-info">
-            <div class="period-control">
-                <label>Period:</label>
-                <select bind:value={period} onchange={updateMatchData}>
-                    <option value={1}>1st</option>
-                    <option value={2}>2nd</option>
-                    <option value={3}>3rd</option>
-                </select>
-            </div>
-
-            <div class="time-control">
-                <label>Time:</label>
-                <input
-                    type="text"
-                    bind:value={time}
-                    onchange={updateMatchData}
-                    pattern="[0-9]{(1, 2)}:[0-9]{2}"
-                    placeholder="MM:SS"
-                />
-            </div>
-        </div>
-
-        <button
-            class="update-button"
-            onclick={updateMatchData}
-            disabled={$connectionStatus !== "connected"}
-        >
-            Update Overlay
-        </button>
-    </div>
+    {/if}
 
     <!-- Preview Box -->
     <div
@@ -556,7 +653,6 @@
             {/if}
         {/if}
     </div>
-</div>
 
 <style>
     :global(body) {
@@ -1159,5 +1255,180 @@
 
     .update-button:hover {
         background: #66bb6a;
+    }
+    
+    /* Score Controls */
+    .score-controls {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        max-width: 800px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 30px;
+        transition: border-color 0.2s;
+    }
+    
+    .score-controls.auto-mode {
+        border-color: #2196f3;
+    }
+    
+    .score-mode-selector {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    
+    .score-label {
+        font-size: 16px;
+        font-weight: bold;
+        color: #fff;
+    }
+    
+    .radio-option {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        cursor: pointer;
+        color: #aaa;
+        font-size: 14px;
+    }
+    
+    .radio-option input[type="radio"] {
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+    
+    .radio-option:hover {
+        color: #fff;
+    }
+    
+    .polling-indicator {
+        font-size: 14px;
+        animation: spin 1s linear infinite;
+        color: #2196f3;
+    }
+    
+    @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+    }
+    
+    .score-display {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+    }
+    
+    .score-control-group {
+        display: flex;
+        align-items: center;
+        gap: 0;
+    }
+    
+    .score-btn {
+        width: 40px;
+        height: 40px;
+        border-radius: 0;
+        border: 1px solid #444;
+        background: #2a2a2a;
+        color: #fff;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.2s;
+        box-sizing: border-box;
+    }
+    
+    .score-btn:first-child {
+        border-top-left-radius: 4px;
+        border-bottom-left-radius: 4px;
+        border-right: none;
+    }
+    
+    .score-btn:last-child {
+        border-top-right-radius: 4px;
+        border-bottom-right-radius: 4px;
+        border-left: none;
+    }
+    
+    .score-btn:hover:not(:disabled) {
+        background: #2196f3;
+        border-color: #2196f3;
+    }
+    
+    .score-btn:disabled {
+        background: #1a1a1a;
+        border-color: #333;
+        color: #666;
+        cursor: not-allowed;
+    }
+    
+    .score-input {
+        width: 80px;
+        height: 40px;
+        border: 1px solid #444;
+        border-radius: 0;
+        background: #2a2a2a;
+        color: #fff;
+        font-size: 20px;
+        font-weight: bold;
+        text-align: center;
+        padding: 0;
+        box-sizing: border-box;
+        -moz-appearance: textfield; /* Firefox: hide spinner */
+        transition: all 0.2s;
+    }
+    
+    /* Hide spinner buttons in WebKit browsers */
+    .score-input::-webkit-outer-spin-button,
+    .score-input::-webkit-inner-spin-button {
+        -webkit-appearance: none;
+        margin: 0;
+    }
+    
+    .score-input:focus {
+        outline: none;
+        border-color: #2196f3;
+        background: #333;
+    }
+    
+    .score-input:disabled {
+        background: #1a1a1a;
+        border-color: #333;
+        color: #666;
+        cursor: not-allowed;
+    }
+    
+    .score-input.auto {
+        background: rgba(33, 150, 243, 0.1);
+        border-color: #2196f3;
+        color: #2196f3;
+    }
+    
+    .team-score-display {
+        font-size: 32px;
+        font-weight: bold;
+        color: #fff;
+        min-width: 60px;
+        text-align: center;
+    }
+    
+    .team-score-display.auto {
+        color: #2196f3;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        padding: 4px 8px;
+        background: rgba(33, 150, 243, 0.1);
+    }
+    
+    .score-separator {
+        font-size: 24px;
+        color: #666;
+        font-weight: bold;
     }
 </style>

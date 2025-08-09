@@ -117,6 +117,14 @@ class TorneopalAPI {
   }
 
   /**
+   * Get current live score for a specific match
+   * This endpoint is designed for frequent polling (max 1 per second)
+   */
+  async getScore(matchId) {
+    return await this.makeRequest("getScore", { match_id: matchId });
+  }
+
+  /**
    * Get teams information
    */
   async getTeams(filters = {}) {
