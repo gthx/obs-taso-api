@@ -20,6 +20,9 @@
     let autoScoreInterval = null;
     let apiScores = $state(null);
     let isPollingScores = $state(false);
+    
+    // Time control state
+    let timeMode = $state("auto"); // "auto", "manual", or "period"
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
@@ -79,6 +82,15 @@
         }
     }
     
+    // Time control functions
+    function setTimeMode(mode) {
+        timeMode = mode;
+        localStorage.setItem("time-mode", mode);
+        
+        // Update overlay when time mode changes
+        updateMatchData();
+    }
+    
     async function startScorePolling() {
         if (!matchId || !torneopalApiKey || autoScoreInterval) {
             return;
@@ -130,16 +142,18 @@
                         }
                     }
                     
-                    // Update period and time if available
-                    if (result.score.live_period && result.score.live_period !== "-1" && result.score.live_period !== "") {
-                        const newPeriod = parseInt(result.score.live_period);
-                        if (!isNaN(newPeriod) && newPeriod > 0) {
-                            period = newPeriod;
+                    // Update period and time based on time mode
+                    if (timeMode === "auto") {
+                        if (result.score.live_period && result.score.live_period !== "-1" && result.score.live_period !== "") {
+                            const newPeriod = parseInt(result.score.live_period);
+                            if (!isNaN(newPeriod) && newPeriod > 0) {
+                                period = newPeriod;
+                            }
                         }
-                    }
-                    
-                    if (result.score.live_time_mmss && result.score.live_time_mmss !== "" && result.score.live_time_mmss !== "00:00") {
-                        time = result.score.live_time_mmss;
+                        
+                        if (result.score.live_time_mmss && result.score.live_time_mmss !== "" && result.score.live_time_mmss !== "00:00") {
+                            time = result.score.live_time_mmss;
+                        }
                     }
                     
                     // Update overlay
@@ -181,7 +195,8 @@
                 logo: matchInfo?.awayTeamLogo || ""
             },
             period,
-            time,
+            time: timeMode === "period" ? "" : time, // Empty time in period mode
+            timeMode,
             lastUpdated: new Date().toISOString(),
         };
 
@@ -205,6 +220,12 @@
         const savedScoreMode = localStorage.getItem("score-mode");
         if (savedScoreMode) {
             scoreMode = savedScoreMode;
+        }
+        
+        // Load time mode preference
+        const savedTimeMode = localStorage.getItem("time-mode");
+        if (savedTimeMode) {
+            timeMode = savedTimeMode;
         }
 
         // Load Torneopal settings
@@ -526,6 +547,72 @@
                     min={0}
                     onchange={updateMatchData}
                 />
+            </div>
+        </div>
+    {/if}
+
+    <!-- Time Controls Section -->
+    {#if matchInfo}
+        <div class="time-controls" class:auto-mode={timeMode === "auto"}>
+            <div class="time-mode-selector">
+                <span class="time-label">Time:</span>
+                <label class="radio-option">
+                    <input 
+                        type="radio" 
+                        bind:group={timeMode} 
+                        value="auto"
+                        onchange={() => setTimeMode("auto")}
+                    />
+                    <span class="radio-text">auto</span>
+                </label>
+                <label class="radio-option">
+                    <input 
+                        type="radio" 
+                        bind:group={timeMode} 
+                        value="manual"
+                        onchange={() => setTimeMode("manual")}
+                    />
+                    <span class="radio-text">manual</span>
+                </label>
+                <label class="radio-option">
+                    <input 
+                        type="radio" 
+                        bind:group={timeMode} 
+                        value="period"
+                        onchange={() => setTimeMode("period")}
+                    />
+                    <span class="radio-text">period</span>
+                </label>
+            </div>
+            
+            <div class="time-display">
+                <div class="time-field">
+                    <span class="field-label">Period:</span>
+                    <NumericInput 
+                        bind:value={period}
+                        disabled={timeMode === "auto" || $connectionStatus !== "connected"}
+                        autoMode={timeMode === "auto"}
+                        min={1}
+                        max={3}
+                        width="60px"
+                        onchange={updateMatchData}
+                    />
+                </div>
+                
+                <div class="time-field">
+                    <span class="field-label">Time:</span>
+                    <input 
+                        type="text" 
+                        class="time-input"
+                        class:auto={timeMode === "auto"}
+                        class:disabled={timeMode === "period"}
+                        bind:value={time}
+                        onchange={updateMatchData}
+                        disabled={timeMode === "auto" || timeMode === "period" || $connectionStatus !== "connected"}
+                        placeholder="MM:SS"
+                        pattern="[0-9]{1,2}:[0-9]{2}"
+                    />
+                </div>
             </div>
         </div>
     {/if}
@@ -1301,5 +1388,95 @@
         font-size: 24px;
         color: #666;
         font-weight: bold;
+    }
+    
+    /* Time Controls */
+    .time-controls {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        max-width: 800px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 30px;
+        transition: border-color 0.2s;
+    }
+    
+    .time-controls.auto-mode {
+        border-color: #2196f3;
+    }
+    
+    .time-mode-selector {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    
+    .time-label {
+        font-size: 16px;
+        font-weight: bold;
+        color: #fff;
+    }
+    
+    .time-display {
+        display: flex;
+        align-items: center;
+        gap: 30px;
+    }
+    
+    .time-field {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .field-label {
+        font-size: 14px;
+        color: #aaa;
+        min-width: 50px;
+    }
+    
+    .time-input {
+        width: 80px;
+        height: 40px;
+        border: 1px solid #444;
+        border-radius: 4px;
+        background: #2a2a2a;
+        color: #fff;
+        font-size: 16px;
+        font-weight: bold;
+        text-align: center;
+        padding: 0 8px;
+        box-sizing: border-box;
+        transition: all 0.2s;
+    }
+    
+    .time-input:focus {
+        outline: none;
+        border-color: #2196f3;
+        background: #333;
+    }
+    
+    .time-input:disabled {
+        background: #1a1a1a;
+        border-color: #333;
+        color: #666;
+        cursor: not-allowed;
+    }
+    
+    .time-input.auto {
+        background: rgba(33, 150, 243, 0.1);
+        border-color: #2196f3;
+        color: #2196f3;
+    }
+    
+    .time-input.disabled {
+        background: #1a1a1a;
+        border-color: #333;
+        color: #666;
+        cursor: not-allowed;
     }
 </style>

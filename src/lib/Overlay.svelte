@@ -97,7 +97,11 @@
         <!-- Period and time hanging below -->
         <div class="game-info">
             <span class="period">{$matchData.period || 1}.</span>
-            <span class="time">{$matchData.time || "20:00"}</span>
+            {#if !$matchData.time}
+                <span class="time period-mode">--:--</span>
+            {:else}
+                <span class="time">{$matchData.time}</span>
+            {/if}
         </div>
     {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}
         <div class="connecting">
@@ -200,6 +204,10 @@
 
     .time {
         font-variant-numeric: tabular-nums;
+    }
+    
+    .time.period-mode {
+        opacity: 0.7;
     }
 
     .connecting {
