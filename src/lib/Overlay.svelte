@@ -66,11 +66,13 @@
         <!-- Main scoreboard container -->
         <div class="main-scoreboard">
             <div class="team-section home">
-                <img
-                    class="logo home-logo"
-                    src="https://cdn.torneopal.net/logo/salibandy/254x.webp"
-                    alt="Home Logo"
-                />
+                {#if $matchData.homeTeam?.logo}
+                    <img
+                        class="logo home-logo"
+                        src={$matchData.homeTeam.logo}
+                        alt="{$matchData.homeTeam?.name} Logo"
+                    />
+                {/if}
                 <!-- <div class="team-name">{$matchData.homeTeam?.name}</div> -->
                 <div class="team-score">{$matchData.homeTeam?.score || 0}</div>
             </div>
@@ -78,11 +80,13 @@
             <div class="divider">-</div>
 
             <div class="team-section away">
-                <img
-                    class="logo away-logo"
-                    src="https://cdn.torneopal.net/logo/salibandy/352x.webp"
-                    alt="Away Logo"
-                />
+                {#if $matchData.awayTeam?.logo}
+                    <img
+                        class="logo away-logo"
+                        src={$matchData.awayTeam.logo}
+                        alt="{$matchData.awayTeam?.name} Logo"
+                    />
+                {/if}
                 <!-- <div class="team-name">{$matchData.awayTeam?.name}</div> -->
                 <div class="team-score">{$matchData.awayTeam?.score || 0}</div>
             </div>

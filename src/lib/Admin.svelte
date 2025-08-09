@@ -12,6 +12,7 @@
     let isConnecting = $state(false);
     let connectionBoxExpanded = $state(false);
     let obsPreviewExpanded = $state(true);
+    let showMatchPopup = $state(false);
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
@@ -78,8 +79,16 @@
 
     async function updateMatchData() {
         const data = {
-            homeTeam: { name: homeTeamName, score: homeTeamScore },
-            awayTeam: { name: awayTeamName, score: awayTeamScore },
+            homeTeam: { 
+                name: homeTeamName, 
+                score: homeTeamScore,
+                logo: matchInfo?.homeTeamLogo || ""
+            },
+            awayTeam: { 
+                name: awayTeamName, 
+                score: awayTeamScore,
+                logo: matchInfo?.awayTeamLogo || ""
+            },
             period,
             time,
             lastUpdated: new Date().toISOString(),
@@ -215,6 +224,8 @@
                 const newMatchInfo = {
                     homeTeam: match.team_A_name || "Home Team",
                     awayTeam: match.team_B_name || "Away Team",
+                    homeTeamLogo: match.club_A_crest || "",
+                    awayTeamLogo: match.club_B_crest || "",
                     date: match.date,
                     time: match.time,
                     venue: match.venue_name || "Venue",
@@ -274,62 +285,119 @@
     <!-- Torneopal Top Bar -->
     <div class="torneopal-top-bar">
         <div class="top-bar-content">
-            <div class="api-key-section">
-                <label>Torneopal API Key:</label>
-                <input
-                    type="password"
-                    placeholder="Enter API Key"
-                    bind:value={torneopalApiKey}
-                    onchange={saveTorneopalSettings}
-                />
-            </div>
-
-            <div class="match-section">
-                <label>Match ID:</label>
-                <input
-                    type="text"
-                    placeholder="Enter Match ID"
-                    bind:value={matchId}
-                    onchange={saveTorneopalSettings}
-                />
-            </div>
-
-            <button
-                class="reset-game-btn"
-                onclick={resetGame}
-                disabled={!matchId || !torneopalApiKey}
-                title="Load"
-            >
-                🔄 Load
-            </button>
+            {#if matchInfo}
+                <div class="match-info-section">
+                    <div class="match-teams-info">
+                        {#if matchInfo.homeTeamLogo}
+                            <img 
+                                src={matchInfo.homeTeamLogo} 
+                                alt={matchInfo.homeTeam}
+                                class="team-logo"
+                            />
+                        {/if}
+                        <span class="team-name">{matchInfo.homeTeam}</span>
+                        <span class="vs">vs</span>
+                        <span class="team-name">{matchInfo.awayTeam}</span>
+                        {#if matchInfo.awayTeamLogo}
+                            <img 
+                                src={matchInfo.awayTeamLogo} 
+                                alt={matchInfo.awayTeam}
+                                class="team-logo"
+                            />
+                        {/if}
+                        {#if matchInfo.category}
+                            <span class="match-category">{matchInfo.category}</span>
+                        {/if}
+                    </div>
+                    <div class="match-details-info">
+                        <span class="match-date">
+                            📅 {new Date(
+                                matchInfo.date + "T" + matchInfo.time,
+                            ).toLocaleDateString("fi-FI", {
+                                weekday: "short",
+                                day: "numeric",
+                                month: "numeric",
+                            })}
+                        </span>
+                        <span class="match-time">🕐 {matchInfo.time.substring(0, 5)}</span>
+                        <span class="match-venue">📍 {matchInfo.venue}</span>
+                        <button 
+                            class="change-match-btn"
+                            onclick={() => showMatchPopup = true}
+                            title="Change Match"
+                        >
+                            ⚙️
+                        </button>
+                    </div>
+                </div>
+            {:else}
+                <button 
+                    class="load-match-btn"
+                    onclick={() => showMatchPopup = true}
+                    title="Load Match"
+                >
+                    🔄 Load Match
+                </button>
+            {/if}
         </div>
     </div>
-
-    {#if matchInfo}
-        <div class="match-info-header">
-            <div class="match-teams">
-                {matchInfo.homeTeam} vs {matchInfo.awayTeam}
-            </div>
-            {#if matchInfo.category}
-                <div class="match-category">{matchInfo.category}</div>
-            {/if}
-            <div class="match-details">
-                📅 <span class="match-date"
-                    >{new Date(
-                        matchInfo.date + "T" + matchInfo.time,
-                    ).toLocaleDateString("fi-FI", {
-                        weekday: "short",
-                        day: "numeric",
-                        month: "numeric",
-                        year: "numeric",
-                    })}</span
-                >
-                🕐
-                <span class="match-time">{matchInfo.time.substring(0, 5)}</span>
-                📍 <span class="match-venue">{matchInfo.venue}</span>
+    
+    <!-- Match Settings Popup -->
+    {#if showMatchPopup}
+        <div class="popup-overlay" onclick={(e) => { if (e.target === e.currentTarget) showMatchPopup = false; }}>
+            <div class="popup-modal">
+                <div class="popup-header">
+                    <h3>Match Settings</h3>
+                    <button class="popup-close" onclick={() => showMatchPopup = false}>✕</button>
+                </div>
+                <div class="popup-content">
+                    <div class="popup-field">
+                        <label for="api-key">Torneopal API Key:</label>
+                        <input
+                            id="api-key"
+                            type="password"
+                            placeholder="Enter API Key"
+                            bind:value={torneopalApiKey}
+                            onchange={saveTorneopalSettings}
+                        />
+                    </div>
+                    
+                    <div class="popup-field">
+                        <label for="match-id">Match ID:</label>
+                        <input
+                            id="match-id"
+                            type="text"
+                            placeholder="Enter Match ID"
+                            bind:value={matchId}
+                            onchange={saveTorneopalSettings}
+                        />
+                    </div>
+                    
+                    <div class="popup-actions">
+                        <button
+                            class="popup-load-btn"
+                            onclick={async () => {
+                                await resetGame();
+                                if (matchInfo) {
+                                    showMatchPopup = false;
+                                }
+                            }}
+                            disabled={!matchId || !torneopalApiKey}
+                        >
+                            🔄 Load Match
+                        </button>
+                        <button
+                            class="popup-cancel-btn"
+                            onclick={() => showMatchPopup = false}
+                        >
+                            Cancel
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     {/if}
+
 
     <div class="match-controls">
         <h2>Match Information</h2>
@@ -511,38 +579,6 @@
         color: #ffffff;
     }
 
-    /* Match Info Header */
-    .match-info-header {
-        /*display: flex;*/
-        align-items: center;
-        justify-content: flex-start;
-        gap: 15px;
-        margin-bottom: 30px;
-        padding: 15px 20px;
-        background: #1e1e1e;
-        border-radius: 8px;
-        border: 1px solid #333;
-        font-size: 16px;
-        flex-wrap: wrap;
-        max-width: 800px;
-    }
-
-    .match-teams {
-        font-weight: bold;
-        color: #ffffff;
-        font-size: 18px;
-    }
-
-    .match-separator {
-        color: #555;
-    }
-
-    .match-date,
-    .match-time,
-    .match-venue {
-        color: #aaa;
-        white-space: nowrap;
-    }
 
     /* Torneopal Top Bar */
     .torneopal-top-bar {
@@ -558,62 +594,234 @@
     }
 
     .top-bar-content {
-        max-width: 1200px;
-        margin: 0 auto;
+        max-width: 100%;
+        padding: 0 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        min-height: 40px;
+    }
+    
+    .load-match-btn {
+        padding: 6px 16px;
+        background: #ff5722;
+        color: white;
+        font-size: 14px;
+        font-weight: bold;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+    
+    .load-match-btn:hover {
+        background: #ff7043;
+    }
+    
+    .match-info-section {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        width: 100%;
+        gap: 30px;
+    }
+    
+    .match-teams-info {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        font-size: 16px;
+    }
+    
+    .team-logo {
+        width: 32px;
+        height: 32px;
+        object-fit: contain;
+        background: white;
+        border-radius: 4px;
+        padding: 2px;
+    }
+    
+    .team-name {
+        font-weight: bold;
+        color: #fff;
+    }
+    
+    .vs {
+        color: #888;
+        font-size: 14px;
+    }
+    
+    .match-category {
+        padding: 2px 8px;
+        background: #2a2a2a;
+        border-radius: 4px;
+        font-size: 12px;
+        color: #aaa;
+        margin-left: 8px;
+    }
+    
+    .match-details-info {
         display: flex;
         align-items: center;
         gap: 20px;
-        flex-wrap: wrap;
-    }
-
-    .api-key-section,
-    .match-section {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .api-key-section {
-        flex: 0 1 auto;
-    }
-
-    .match-section {
-        flex: 1 1 auto;
-    }
-
-    .top-bar-content label {
-        font-size: 13px;
+        font-size: 14px;
         color: #aaa;
+    }
+    
+    .match-date,
+    .match-time,
+    .match-venue {
         white-space: nowrap;
     }
+    
+    .change-match-btn {
+        background: transparent;
+        border: 1px solid #444;
+        padding: 4px 8px;
+        font-size: 14px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.2s;
+        margin-left: 12px;
+    }
+    
+    .change-match-btn:hover {
+        background: #2a2a2a;
+        border-color: #2196f3;
+    }
 
-    .top-bar-content input[type="password"],
-    .top-bar-content input[type="text"] {
-        width: 200px;
-        padding: 5px 10px;
+    /* Popup Styles */
+    .popup-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+    }
+    
+    .popup-modal {
+        background: #1e1e1e;
+        border: 2px solid #333;
+        border-radius: 8px;
+        min-width: 400px;
+        max-width: 500px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    }
+    
+    .popup-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid #333;
+    }
+    
+    .popup-header h3 {
+        margin: 0;
+        color: #fff;
+        font-size: 18px;
+    }
+    
+    .popup-close {
+        background: transparent;
+        border: none;
+        color: #888;
+        font-size: 20px;
+        cursor: pointer;
+        padding: 0;
+        width: 24px;
+        height: 24px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: color 0.2s;
+    }
+    
+    .popup-close:hover {
+        color: #fff;
+    }
+    
+    .popup-content {
+        padding: 20px;
+    }
+    
+    .popup-field {
+        margin-bottom: 20px;
+    }
+    
+    .popup-field label {
+        display: block;
+        margin-bottom: 8px;
+        color: #aaa;
+        font-size: 14px;
+    }
+    
+    .popup-field input {
+        width: 100%;
+        padding: 10px;
         background: #2a2a2a;
         border: 1px solid #444;
         border-radius: 4px;
         color: #fff;
-        font-size: 12px;
+        font-size: 14px;
+        box-sizing: border-box;
     }
-
-    .reset-game-btn {
-        padding: 6px 16px;
+    
+    .popup-field input:focus {
+        outline: none;
+        border-color: #2196f3;
+    }
+    
+    .popup-actions {
+        display: flex;
+        gap: 12px;
+        justify-content: flex-end;
+        margin-top: 24px;
+    }
+    
+    .popup-load-btn {
+        padding: 10px 20px;
         background: #ff5722;
-        font-size: 13px;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
         font-weight: bold;
-        margin-left: auto;
+        cursor: pointer;
+        transition: background 0.2s;
     }
-
-    .reset-game-btn:hover:not(:disabled) {
+    
+    .popup-load-btn:hover:not(:disabled) {
         background: #ff7043;
     }
-
-    .no-connection {
-        color: #999;
-        font-size: 13px;
-        font-style: italic;
+    
+    .popup-load-btn:disabled {
+        background: #555;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+    
+    .popup-cancel-btn {
+        padding: 10px 20px;
+        background: transparent;
+        color: #aaa;
+        border: 1px solid #444;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+    }
+    
+    .popup-cancel-btn:hover {
+        background: #2a2a2a;
+        color: #fff;
+        border-color: #666;
     }
 
     /* Preview Box */
