@@ -6,6 +6,7 @@
         matchData,
     } from "./obsWebSocket.js";
     import { torneopalApi } from "./torneopalApi.js";
+    import NumericInput from "./NumericInput.svelte";
 
     let wsUrl = $state("ws://localhost:4455");
     let wsPassword = $state("");
@@ -187,23 +188,6 @@
         await obsWebSocket.setMatchData(data);
     }
 
-    function incrementScore(team) {
-        if (team === "home") {
-            homeTeamScore++;
-        } else {
-            awayTeamScore++;
-        }
-        updateMatchData();
-    }
-
-    function decrementScore(team) {
-        if (team === "home" && homeTeamScore > 0) {
-            homeTeamScore--;
-        } else if (team === "away" && awayTeamScore > 0) {
-            awayTeamScore--;
-        }
-        updateMatchData();
-    }
 
     // Load saved connection settings from localStorage
     function loadSavedSettings() {
@@ -525,51 +509,23 @@
             </div>
             
             <div class="score-display">
-                <div class="score-control-group">
-                    <button 
-                        class="score-btn" 
-                        onclick={() => decrementScore("home")}
-                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
-                    >-</button>
-                    <input 
-                        type="number" 
-                        class="score-input"
-                        class:auto={scoreMode === "auto"}
-                        bind:value={homeTeamScore}
-                        onchange={updateMatchData}
-                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
-                        min="0"
-                    />
-                    <button 
-                        class="score-btn" 
-                        onclick={() => incrementScore("home")}
-                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
-                    >+</button>
-                </div>
+                <NumericInput 
+                    bind:value={homeTeamScore}
+                    disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    autoMode={scoreMode === "auto"}
+                    min={0}
+                    onchange={updateMatchData}
+                />
                 
                 <span class="score-separator">-</span>
                 
-                <div class="score-control-group">
-                    <button 
-                        class="score-btn" 
-                        onclick={() => decrementScore("away")}
-                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
-                    >-</button>
-                    <input 
-                        type="number" 
-                        class="score-input"
-                        class:auto={scoreMode === "auto"}
-                        bind:value={awayTeamScore}
-                        onchange={updateMatchData}
-                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
-                        min="0"
-                    />
-                    <button 
-                        class="score-btn" 
-                        onclick={() => incrementScore("away")}
-                        disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
-                    >+</button>
-                </div>
+                <NumericInput 
+                    bind:value={awayTeamScore}
+                    disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    autoMode={scoreMode === "auto"}
+                    min={0}
+                    onchange={updateMatchData}
+                />
             </div>
         </div>
     {/if}
@@ -1324,91 +1280,6 @@
         gap: 20px;
     }
     
-    .score-control-group {
-        display: flex;
-        align-items: center;
-        gap: 0;
-    }
-    
-    .score-btn {
-        width: 40px;
-        height: 40px;
-        border-radius: 0;
-        border: 1px solid #444;
-        background: #2a2a2a;
-        color: #fff;
-        font-size: 16px;
-        font-weight: bold;
-        cursor: pointer;
-        transition: all 0.2s;
-        box-sizing: border-box;
-    }
-    
-    .score-btn:first-child {
-        border-top-left-radius: 4px;
-        border-bottom-left-radius: 4px;
-        border-right: none;
-    }
-    
-    .score-btn:last-child {
-        border-top-right-radius: 4px;
-        border-bottom-right-radius: 4px;
-        border-left: none;
-    }
-    
-    .score-btn:hover:not(:disabled) {
-        background: #2196f3;
-        border-color: #2196f3;
-    }
-    
-    .score-btn:disabled {
-        background: #1a1a1a;
-        border-color: #333;
-        color: #666;
-        cursor: not-allowed;
-    }
-    
-    .score-input {
-        width: 80px;
-        height: 40px;
-        border: 1px solid #444;
-        border-radius: 0;
-        background: #2a2a2a;
-        color: #fff;
-        font-size: 20px;
-        font-weight: bold;
-        text-align: center;
-        padding: 0;
-        box-sizing: border-box;
-        -moz-appearance: textfield; /* Firefox: hide spinner */
-        transition: all 0.2s;
-    }
-    
-    /* Hide spinner buttons in WebKit browsers */
-    .score-input::-webkit-outer-spin-button,
-    .score-input::-webkit-inner-spin-button {
-        -webkit-appearance: none;
-        margin: 0;
-    }
-    
-    .score-input:focus {
-        outline: none;
-        border-color: #2196f3;
-        background: #333;
-    }
-    
-    .score-input:disabled {
-        background: #1a1a1a;
-        border-color: #333;
-        color: #666;
-        cursor: not-allowed;
-    }
-    
-    .score-input.auto {
-        background: rgba(33, 150, 243, 0.1);
-        border-color: #2196f3;
-        color: #2196f3;
-    }
     
     .team-score-display {
         font-size: 32px;
