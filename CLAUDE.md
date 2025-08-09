@@ -33,6 +33,10 @@ This is a Svelte 5 application using Vite as the build tool:
 - **Module System**: ESNext modules with bundler resolution
 - **Preprocessing**: Uses `vitePreprocess` for handling various file types in Svelte components
 
+## Coding Guidelines
+
+- Always use modern Svelte5 with runes.
+
 ## Floorball Match Overlay System
 
 This project includes a floorball match broadcast overlay system for OBS Studio:

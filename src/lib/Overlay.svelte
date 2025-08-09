@@ -6,8 +6,8 @@
         matchData,
     } from "./obsWebSocket.js";
 
-    let isConnected = false;
-    let retryCount = 0;
+    let isConnected = $state(false);
+    let retryCount = $state(0);
     const maxRetries = 10;
 
     // Get password from URL query parameter
