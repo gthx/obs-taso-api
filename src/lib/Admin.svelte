@@ -251,8 +251,13 @@
         }
     }
 
-    onMount(() => {
+    onMount(async () => {
         loadSavedSettings();
+        
+        // Auto-connect to OBS WebSocket
+        if ($connectionStatus === "disconnected") {
+            await connect();
+        }
 
         return () => {
             obsWebSocket.disconnect();
@@ -406,6 +411,11 @@
     >
         <div class="preview-header">
             <span class="preview-title">OBS Preview</span>
+            {#if $connectionStatus === "connected"}
+                <button class="copy-url-icon" onclick={copyOverlayUrl} title="Copy Overlay URL">
+                    📋
+                </button>
+            {/if}
             <span class="preview-status {$connectionStatus}"
                 >{$connectionStatus}</span
             >
@@ -458,9 +468,6 @@
                 <div class="preview-game-info">
                     Period {period} | {time}
                 </div>
-                <button class="copy-url-button" onclick={copyOverlayUrl}>
-                    📋 Copy Overlay URL
-                </button>
             </div>
         {/if}
     </div>
@@ -613,11 +620,31 @@
 
     .preview-header {
         display: flex;
-        justify-content: space-between;
         align-items: center;
+        gap: 8px;
         margin-bottom: 12px;
         padding-bottom: 8px;
         border-bottom: 1px solid #333;
+    }
+    
+    .preview-header .preview-status {
+        margin-left: auto;
+    }
+    
+    .copy-url-icon {
+        background: transparent;
+        border: 1px solid #444;
+        padding: 4px 8px;
+        font-size: 16px;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.2s;
+        margin-left: auto;
+    }
+    
+    .copy-url-icon:hover {
+        background: #2a2a2a;
+        border-color: #ff9800;
     }
 
     .preview-title {
@@ -719,16 +746,6 @@
         margin-bottom: 12px;
     }
 
-    .obs-preview-box .copy-url-button {
-        width: 100%;
-        padding: 8px;
-        font-size: 13px;
-        background: #ff9800;
-    }
-
-    .obs-preview-box .copy-url-button:hover {
-        background: #ffb74d;
-    }
 
     .connection-form {
         display: flex;
@@ -761,11 +778,6 @@
         text-align: center;
     }
 
-    .connected-actions .copy-url-button {
-        padding: 6px 12px;
-        font-size: 12px;
-        margin-bottom: 8px;
-    }
 
     .connection-note {
         margin-top: 5px;
@@ -899,17 +911,6 @@
         color: #ffffff;
     }
 
-    .copy-url-button {
-        background: #ff9800;
-        color: white;
-        border: none;
-        border-radius: 4px;
-        cursor: pointer;
-    }
-
-    .copy-url-button:hover {
-        background: #ffb74d;
-    }
 
     .update-button {
         display: block;

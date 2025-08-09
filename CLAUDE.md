@@ -62,3 +62,5 @@ The application follows standard Svelte project structure:
 - Components live in `src/lib/`
 - Assets are stored in `src/assets/` and `public/`
 - Global styles are imported via `src/app.css`
+
+- Bun development server is already running and I'll test the changes manually.
