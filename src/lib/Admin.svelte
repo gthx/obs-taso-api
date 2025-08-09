@@ -11,6 +11,7 @@
     let wsPassword = $state("");
     let isConnecting = $state(false);
     let connectionBoxExpanded = $state(false);
+    let obsPreviewExpanded = $state(true);
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
@@ -408,27 +409,35 @@
         </button>
     </div>
 
-    <!-- OBS Preview Box -->
+    <!-- Preview Box -->
     <div
         class="obs-preview-box"
         class:connected={$connectionStatus === "connected"}
+        class:collapsed={!obsPreviewExpanded}
     >
         <div class="preview-header">
-            <span class="preview-title">OBS Preview</span>
-            {#if $connectionStatus === "connected"}
-                <button class="copy-url-icon" onclick={copyOverlayUrl} title="Copy Overlay URL">
-                    📋
+            <span class="preview-title">Preview</span>
+            <div class="preview-actions">
+                {#if $connectionStatus === "connected" && obsPreviewExpanded}
+                    <button class="copy-url-icon" onclick={copyOverlayUrl} title="Copy Overlay URL">
+                        📋
+                    </button>
+                    <button class="disconnect-icon" onclick={disconnect} title="Disconnect">
+                        ❌
+                    </button>
+                {/if}
+                <button 
+                    class="expand-icon" 
+                    onclick={() => obsPreviewExpanded = !obsPreviewExpanded}
+                    title={obsPreviewExpanded ? "Collapse" : "Expand"}
+                >
+                    {obsPreviewExpanded ? "▼" : "▲"}
                 </button>
-                <button class="disconnect-icon" onclick={disconnect} title="Disconnect">
-                    ❌
-                </button>
-            {/if}
-            <span class="preview-status {$connectionStatus}"
-                >{$connectionStatus}</span
-            >
+            </div>
         </div>
 
-        {#if $connectionStatus !== "connected"}
+        {#if obsPreviewExpanded}
+            {#if $connectionStatus !== "connected"}
             <div class="preview-auth-info">
                 <h4>OBS WebSocket Configuration</h4>
                 <div class="auth-field">
@@ -463,7 +472,7 @@
                     {isConnecting ? "Connecting..." : "Connect to OBS"}
                 </button>
             </div>
-        {:else}
+            {:else}
             <div class="preview-match-data">
                 <div class="preview-teams">
                     <span class="home-preview">{homeTeamName || "Home"}</span>
@@ -476,6 +485,7 @@
                     Period {period} | {time}
                 </div>
             </div>
+            {/if}
         {/if}
     </div>
 </div>
@@ -488,9 +498,9 @@
     }
 
     .admin-container {
-        max-width: 800px;
-        margin: 0 auto;
-        padding: 70px 20px 20px; /* Add top padding for the top bar */
+        max-width: 1200px;
+        margin: 0;
+        padding: 70px 20px 20px 40px; /* Add top padding for the top bar, left padding for left-align */
         font-family: Arial, sans-serif;
         min-height: 100vh;
         position: relative;
@@ -505,7 +515,7 @@
     .match-info-header {
         /*display: flex;*/
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
         gap: 15px;
         margin-bottom: 30px;
         padding: 15px 20px;
@@ -514,6 +524,7 @@
         border: 1px solid #333;
         font-size: 16px;
         flex-wrap: wrap;
+        max-width: 800px;
     }
 
     .match-teams {
@@ -605,7 +616,7 @@
         font-style: italic;
     }
 
-    /* OBS Preview Box */
+    /* Preview Box */
     .obs-preview-box {
         position: fixed;
         bottom: 20px;
@@ -620,6 +631,17 @@
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         transition: all 0.3s ease;
     }
+    
+    .obs-preview-box.collapsed {
+        min-width: 200px;
+        padding: 12px;
+    }
+    
+    .obs-preview-box.collapsed .preview-header {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+    }
 
     .obs-preview-box.connected {
         border-color: #66bb6a;
@@ -628,18 +650,21 @@
     .preview-header {
         display: flex;
         align-items: center;
-        gap: 8px;
+        justify-content: space-between;
         margin-bottom: 12px;
         padding-bottom: 8px;
         border-bottom: 1px solid #333;
     }
     
-    .preview-header .preview-status {
-        margin-left: auto;
+    .preview-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
     }
     
     .copy-url-icon,
-    .disconnect-icon {
+    .disconnect-icon,
+    .expand-icon {
         background: transparent;
         border: 1px solid #444;
         padding: 4px 8px;
@@ -649,8 +674,14 @@
         transition: all 0.2s;
     }
     
-    .copy-url-icon {
-        margin-left: auto;
+    .expand-icon {
+        font-size: 12px;
+        padding: 4px 6px;
+    }
+    
+    .expand-icon:hover {
+        background: #2a2a2a;
+        border-color: #2196f3;
     }
     
     .copy-url-icon:hover {
@@ -669,25 +700,6 @@
         color: #fff;
     }
 
-    .preview-status {
-        font-size: 12px;
-        text-transform: uppercase;
-        font-weight: bold;
-        padding: 2px 8px;
-        border-radius: 4px;
-        background: #2a2a2a;
-    }
-
-    .preview-status.connected {
-        color: #66bb6a;
-        background: #1b3a1f;
-    }
-
-    .preview-status.disconnected,
-    .preview-status.error {
-        color: #ef5350;
-        background: #3a1f1f;
-    }
 
     .preview-auth-info h4 {
         margin: 0 0 12px 0;
@@ -834,6 +846,7 @@
         border: 1px solid #333;
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
         transition: opacity 0.3s ease;
+        max-width: 800px;
     }
 
     .match-controls h2 {
