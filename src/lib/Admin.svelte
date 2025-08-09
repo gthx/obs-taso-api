@@ -32,6 +32,7 @@
     
     // Track if time input is being edited
     let isEditingTime = $state(false);
+    let timeInputValue = $state("");
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
@@ -234,9 +235,41 @@
         // Update overlay
         updateMatchData();
     }
+    
+    function decrementTime() {
+        // Don't update time if user is editing it
+        if (isEditingTime) return;
+        
+        // Parse current time and decrement by 1 second
+        const [minutes, seconds] = time.split(':').map(Number);
+        let totalSeconds = minutes * 60 + seconds - 1;
+        
+        // Don't go below 0:00
+        if (totalSeconds < 0) {
+            totalSeconds = 0;
+        }
+        
+        const newMinutes = Math.floor(totalSeconds / 60);
+        const newSeconds = totalSeconds % 60;
+        time = `${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}`;
+        
+        // Update overlay
+        updateMatchData();
+    }
+    
+    function adjustTimeBySeconds(delta) {
+        // Don't update time if user is editing it
+        if (isEditingTime) return;
+        
+        if (delta > 0) {
+            incrementTime();
+        } else if (delta < 0) {
+            decrementTime();
+        }
+    }
 
     function formatTimeInput(inputElement) {
-        let value = inputElement.value.replace(/\D/g, '');
+        let value = (timeInputValue || inputElement.value).replace(/\D/g, '');
         
         // Pad with leading zeros if less than 4 digits
         if (value.length < 4) {
@@ -264,6 +297,7 @@
         // Format as MM:SS
         const formattedTime = `${minutes}:${seconds}`;
         
+        // Update both the input display and the time state
         inputElement.value = formattedTime;
         time = formattedTime;
         
@@ -477,11 +511,28 @@
         // Timer can be started manually via spacebar or play button
     }
 
-    // Handle spacebar for timer control
+    // Handle keyboard shortcuts
     function handleKeydown(event) {
-        if (event.code === 'Space' && event.target.tagName !== 'INPUT' && event.target.tagName !== 'BUTTON') {
+        // Don't handle keys when typing in inputs or clicking buttons
+        if (event.target.tagName === 'INPUT' || event.target.tagName === 'BUTTON') {
+            return;
+        }
+        
+        // Spacebar - toggle timer
+        if (event.code === 'Space') {
             event.preventDefault();
             toggleGlobalTimer();
+        }
+        
+        // Arrow keys - adjust time in manual mode
+        if (timeMode === 'manual' && !isEditingTime && $connectionStatus === 'connected') {
+            if (event.code === 'ArrowUp') {
+                event.preventDefault();
+                incrementTime();
+            } else if (event.code === 'ArrowDown') {
+                event.preventDefault();
+                decrementTime();
+            }
         }
     }
 
@@ -504,6 +555,7 @@
     });
 </script>
 
+<div class="admin-container" class:timer-active={globalTimerActive}>
     <!-- Torneopal Top Bar -->
     <div class="torneopal-top-bar">
         <div class="top-bar-content">
@@ -620,6 +672,26 @@
         </div>
     {/if}
 
+    <!-- Active Timer Section -->
+    {#if matchInfo}
+        <div class="active-timer-section" class:active={globalTimerActive}>
+            <div class="timer-controls">
+                <span class="section-label">Active:</span>
+                <button 
+                    class="timer-button"
+                    class:active={globalTimerActive}
+                    onclick={toggleGlobalTimer}
+                    title={globalTimerActive ? "Pause Timer (Spacebar)" : "Start Timer (Spacebar)"}
+                >
+                    {globalTimerActive ? "⏸️" : "▶️"}
+                </button>
+                <span class="timer-status">
+                    {globalTimerActive ? "Running" : "Paused"}
+                </span>
+            </div>
+        </div>
+    {/if}
+
     <!-- Score Controls Section -->
     {#if matchInfo}
         <div class="score-controls" class:auto-mode={scoreMode === "auto"}>
@@ -722,14 +794,13 @@
                         class="time-input"
                         class:auto={timeMode === "auto"}
                         class:disabled={timeMode === "period"}
-                        bind:value={time}
-                        onchange={updateMatchData}
+                        value={isEditingTime ? timeInputValue : time}
                         onfocus={(e) => {
                             if (timeMode !== "auto" && timeMode !== "period" && $connectionStatus === "connected") {
                                 isEditingTime = true;
                                 // Convert MM:SS to MMSS for editing
-                                const currentTime = e.target.value.replace(':', '');
-                                e.target.value = currentTime;
+                                timeInputValue = time.replace(':', '');
+                                e.target.value = timeInputValue;
                                 e.target.select();
                             }
                         }}
@@ -739,16 +810,19 @@
                             if (value.length > 4) {
                                 value = value.substring(0, 4);
                             }
+                            timeInputValue = value;
                             e.target.value = value;
                         }}
                         onblur={(e) => {
                             isEditingTime = false;
                             formatTimeInput(e.target);
+                            timeInputValue = "";
                         }}
                         onkeydown={(e) => {
                             if (e.key === 'Enter') {
                                 isEditingTime = false;
                                 formatTimeInput(e.target);
+                                timeInputValue = "";
                                 e.target.blur();
                             }
                         }}
@@ -756,20 +830,6 @@
                         placeholder="MMSS"
                         maxlength="4"
                     />
-                </div>
-                
-                <div class="timer-controls">
-                    <button 
-                        class="timer-button"
-                        class:active={globalTimerActive}
-                        onclick={toggleGlobalTimer}
-                        title={globalTimerActive ? "Pause Timer (Spacebar)" : "Start Timer (Spacebar)"}
-                    >
-                        {globalTimerActive ? "⏸️" : "▶️"}
-                    </button>
-                    <span class="timer-status">
-                        {globalTimerActive ? "Running" : "Paused"}
-                    </span>
                 </div>
             </div>
         </div>
@@ -854,12 +914,18 @@
             {/if}
         {/if}
     </div>
+</div>
 
 <style>
     :global(body) {
         background: #121212;
         color: #ffffff;
         margin: 0;
+        transition: background-color 0.3s ease;
+    }
+    
+    :global(body:has(.admin-container.timer-active)) {
+        background: linear-gradient(rgba(76, 175, 80, 0.05), rgba(76, 175, 80, 0.05)), #121212;
     }
 
     .admin-container {
@@ -876,6 +942,43 @@
         color: #ffffff;
     }
 
+    /* Active Timer Section */
+    .active-timer-section {
+        background: #1e1e1e;
+        border: 1px solid #333;
+        border-radius: 8px;
+        padding: 16px 20px;
+        margin-bottom: 20px;
+        max-width: 800px;
+        transition: all 0.3s ease;
+    }
+    
+    .active-timer-section.active {
+        border-color: #4caf50;
+        background: linear-gradient(135deg, #1e1e1e 0%, rgba(76, 175, 80, 0.1) 100%);
+    }
+    
+    .active-timer-section .timer-controls {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    
+    .active-timer-section .section-label {
+        font-size: 16px;
+        font-weight: bold;
+        color: #fff;
+    }
+    
+    .active-timer-section .timer-status {
+        font-size: 14px;
+        color: #aaa;
+        font-weight: bold;
+    }
+    
+    .active-timer-section.active .timer-status {
+        color: #4caf50;
+    }
 
     /* Torneopal Top Bar */
     .torneopal-top-bar {
@@ -1638,13 +1741,7 @@
         cursor: not-allowed;
     }
     
-    /* Timer Controls */
-    .timer-controls {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-    }
-    
+    /* Timer Button */
     .timer-button {
         width: 50px;
         height: 40px;
@@ -1674,11 +1771,5 @@
     .timer-button.active:hover {
         background: #42a5f5;
         border-color: #42a5f5;
-    }
-    
-    .timer-status {
-        font-size: 14px;
-        color: #aaa;
-        font-weight: bold;
     }
 </style>
