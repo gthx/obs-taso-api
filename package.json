@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:ws": "bun dev-ws-server.js",
     "build": "vite build",
     "preview": "vite preview"
   },
