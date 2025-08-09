@@ -23,10 +23,20 @@
     
     // Time control state
     let timeMode = $state("auto"); // "auto", "manual", or "period"
+    
+    // Global timer state
+    let globalTimerActive = $state(false);
+    let globalTimerInterval = null;
+    let lastTick = 0;
+    let accumulatedTime = 0;
+    
+    // Track if time input is being edited
+    let isEditingTime = $state(false);
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
     let matchId = $state("");
+    let torneopalEnabled = $derived(torneopalApiKey && matchId);
     let matchInfo = $state(null);
 
     // Local copy of match data for form binding
@@ -37,6 +47,9 @@
     let period = $state(1);
     let time = $state("20:00");
 
+    // Track previous period to detect changes
+    let previousPeriod = $state(period);
+    
     // Subscribe to match data changes using $effect
     $effect(() => {
         if ($matchData) {
@@ -47,6 +60,16 @@
             period = $matchData.period || 1;
             time = $matchData.time || "20:00";
         }
+    });
+    
+    // Watch for period changes to reset time
+    $effect(() => {
+        if (period !== previousPeriod && timeMode === "manual") {
+            // Reset time to 00:00 when period changes
+            time = "00:00";
+            updateMatchData();
+        }
+        previousPeriod = period;
     });
 
     async function connect() {
@@ -75,11 +98,8 @@
         scoreMode = mode;
         localStorage.setItem("score-mode", mode);
         
-        if (mode === "auto" && matchId) {
-            startScorePolling();
-        } else {
-            stopScorePolling();
-        }
+        // Score polling is now handled by global timer
+        // No need to start/stop separate polling
     }
     
     // Time control functions
@@ -91,32 +111,8 @@
         updateMatchData();
     }
     
-    async function startScorePolling() {
-        if (!matchId || !torneopalApiKey || autoScoreInterval) {
-            return;
-        }
-        
-        isPollingScores = true;
-        
-        // Initial score fetch
-        await fetchCurrentScore();
-        
-        // Set up polling interval (5 seconds)
-        autoScoreInterval = setInterval(async () => {
-            await fetchCurrentScore();
-        }, 5000);
-    }
-    
-    function stopScorePolling() {
-        if (autoScoreInterval) {
-            clearInterval(autoScoreInterval);
-            autoScoreInterval = null;
-        }
-        isPollingScores = false;
-    }
-    
     async function fetchCurrentScore() {
-        if (!matchId || !torneopalApiKey) {
+        if (!torneopalEnabled) {
             return;
         }
         
@@ -163,6 +159,116 @@
         } catch (error) {
             console.error("Failed to fetch current score:", error);
         }
+    }
+
+    // Global timer functions
+    function startGlobalTimer() {
+        if (globalTimerInterval) return;
+        
+        globalTimerActive = true;
+        lastTick = Date.now();
+        accumulatedTime = 0;
+        
+        globalTimerInterval = setInterval(handleGlobalTimerTick, 100); // 100ms tick rate
+    }
+    
+    function stopGlobalTimer() {
+        globalTimerActive = false;
+        if (globalTimerInterval) {
+            clearInterval(globalTimerInterval);
+            globalTimerInterval = null;
+        }
+        accumulatedTime = 0;
+    }
+    
+    function toggleGlobalTimer() {
+        if (globalTimerActive) {
+            stopGlobalTimer();
+        } else {
+            startGlobalTimer();
+        }
+    }
+    
+    function handleGlobalTimerTick() {
+        const now = Date.now();
+        const diff = now - lastTick;
+        lastTick = now;
+        accumulatedTime += diff; // Add 100ms
+        
+        // Run 1-second logic when 1000ms have accumulated
+        if (accumulatedTime >= 1000) {
+            accumulatedTime = 0; // Reset accumulator
+            
+            // Update time based on mode
+            if (timeMode === "manual") {
+                incrementTime();
+            }
+            
+            // Always fetch scores when timer is active (for all modes)
+            if (matchId && torneopalApiKey) {
+                fetchCurrentScore();
+            }
+        }
+    }
+    
+    function incrementTime() {
+        // Don't update time if user is editing it
+        if (isEditingTime) return;
+        
+        // Parse current time and increment by 1 second
+        const [minutes, seconds] = time.split(':').map(Number);
+        let totalSeconds = minutes * 60 + seconds + 1;
+        
+        // Stop at 20:00 (1200 seconds)
+        if (totalSeconds >= 1200) { // 20:00 = 1200 seconds
+            totalSeconds = 1200;
+            time = "20:00";
+            // Stop the timer when reaching 20:00
+            stopGlobalTimer();
+        } else {
+            const newMinutes = Math.floor(totalSeconds / 60);
+            const newSeconds = totalSeconds % 60;
+            time = `${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}`;
+        }
+        
+        // Update overlay
+        updateMatchData();
+    }
+
+    function formatTimeInput(inputElement) {
+        let value = inputElement.value.replace(/\D/g, '');
+        
+        // Pad with leading zeros if less than 4 digits
+        if (value.length < 4) {
+            value = value.padStart(4, '0');
+        }
+        
+        // Extract minutes and seconds
+        let minutes = value.substring(0, 2);
+        let seconds = value.substring(2, 4);
+        
+        // Validate seconds (00-59)
+        const secondsNum = parseInt(seconds);
+        if (secondsNum > 59) {
+            seconds = '59';
+        }
+        
+        // Validate overall time range (0000 to 2000)
+        const totalTime = minutes + seconds;
+        const numValue = parseInt(totalTime);
+        if (numValue > 2000) {
+            minutes = '20';
+            seconds = '00';
+        }
+        
+        // Format as MM:SS
+        const formattedTime = `${minutes}:${seconds}`;
+        
+        inputElement.value = formattedTime;
+        time = formattedTime;
+        
+        // Update the overlay
+        updateMatchData();
     }
 
     function copyOverlayUrl() {
@@ -367,9 +473,15 @@
             }
         }
         
-        // Start score polling if in auto mode
-        if (scoreMode === "auto" && matchInfo) {
-            startScorePolling();
+        // Score polling is now handled by global timer
+        // Timer can be started manually via spacebar or play button
+    }
+
+    // Handle spacebar for timer control
+    function handleKeydown(event) {
+        if (event.code === 'Space' && event.target.tagName !== 'INPUT' && event.target.tagName !== 'BUTTON') {
+            event.preventDefault();
+            toggleGlobalTimer();
         }
     }
 
@@ -380,10 +492,14 @@
         if ($connectionStatus === "disconnected") {
             await connect();
         }
+        
+        // Add global keydown listener
+        document.addEventListener('keydown', handleKeydown);
 
         return () => {
             obsWebSocket.disconnect();
-            stopScorePolling();
+            stopGlobalTimer();
+            document.removeEventListener('keydown', handleKeydown);
         };
     });
 </script>
@@ -608,10 +724,52 @@
                         class:disabled={timeMode === "period"}
                         bind:value={time}
                         onchange={updateMatchData}
+                        onfocus={(e) => {
+                            if (timeMode !== "auto" && timeMode !== "period" && $connectionStatus === "connected") {
+                                isEditingTime = true;
+                                // Convert MM:SS to MMSS for editing
+                                const currentTime = e.target.value.replace(':', '');
+                                e.target.value = currentTime;
+                                e.target.select();
+                            }
+                        }}
+                        oninput={(e) => {
+                            // Only allow digits, max 4 characters
+                            let value = e.target.value.replace(/\D/g, '');
+                            if (value.length > 4) {
+                                value = value.substring(0, 4);
+                            }
+                            e.target.value = value;
+                        }}
+                        onblur={(e) => {
+                            isEditingTime = false;
+                            formatTimeInput(e.target);
+                        }}
+                        onkeydown={(e) => {
+                            if (e.key === 'Enter') {
+                                isEditingTime = false;
+                                formatTimeInput(e.target);
+                                e.target.blur();
+                            }
+                        }}
                         disabled={timeMode === "auto" || timeMode === "period" || $connectionStatus !== "connected"}
-                        placeholder="MM:SS"
-                        pattern="[0-9]{1,2}:[0-9]{2}"
+                        placeholder="MMSS"
+                        maxlength="4"
                     />
+                </div>
+                
+                <div class="timer-controls">
+                    <button 
+                        class="timer-button"
+                        class:active={globalTimerActive}
+                        onclick={toggleGlobalTimer}
+                        title={globalTimerActive ? "Pause Timer (Spacebar)" : "Start Timer (Spacebar)"}
+                    >
+                        {globalTimerActive ? "⏸️" : "▶️"}
+                    </button>
+                    <span class="timer-status">
+                        {globalTimerActive ? "Running" : "Paused"}
+                    </span>
                 </div>
             </div>
         </div>
@@ -1478,5 +1636,49 @@
         border-color: #333;
         color: #666;
         cursor: not-allowed;
+    }
+    
+    /* Timer Controls */
+    .timer-controls {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+    
+    .timer-button {
+        width: 50px;
+        height: 40px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        color: #fff;
+        font-size: 18px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s;
+    }
+    
+    .timer-button:hover {
+        background: #333;
+        border-color: #666;
+    }
+    
+    .timer-button.active {
+        background: #2196f3;
+        border-color: #2196f3;
+        color: #fff;
+    }
+    
+    .timer-button.active:hover {
+        background: #42a5f5;
+        border-color: #42a5f5;
+    }
+    
+    .timer-status {
+        font-size: 14px;
+        color: #aaa;
+        font-weight: bold;
     }
 </style>
