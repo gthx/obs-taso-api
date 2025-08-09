@@ -53,6 +53,10 @@
             isConnecting = false;
         }
     }
+    
+    function disconnect() {
+        obsWebSocket.disconnect();
+    }
 
     function copyOverlayUrl() {
         const baseUrl = `${window.location.protocol}//${window.location.host}/overlay.html`;
@@ -415,6 +419,9 @@
                 <button class="copy-url-icon" onclick={copyOverlayUrl} title="Copy Overlay URL">
                     📋
                 </button>
+                <button class="disconnect-icon" onclick={disconnect} title="Disconnect">
+                    ❌
+                </button>
             {/if}
             <span class="preview-status {$connectionStatus}"
                 >{$connectionStatus}</span
@@ -631,7 +638,8 @@
         margin-left: auto;
     }
     
-    .copy-url-icon {
+    .copy-url-icon,
+    .disconnect-icon {
         background: transparent;
         border: 1px solid #444;
         padding: 4px 8px;
@@ -639,12 +647,20 @@
         cursor: pointer;
         border-radius: 4px;
         transition: all 0.2s;
+    }
+    
+    .copy-url-icon {
         margin-left: auto;
     }
     
     .copy-url-icon:hover {
         background: #2a2a2a;
         border-color: #ff9800;
+    }
+    
+    .disconnect-icon:hover {
+        background: #2a2a2a;
+        border-color: #ef5350;
     }
 
     .preview-title {
