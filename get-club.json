@@ -1,0 +1,61 @@
+{
+  "club": {
+    "club_id": "2970",
+    "name": "Pallokerho-37",
+    "abbrevation": "Pallokerho-37",
+    "www": "http://www.pk-37.fi",
+    "crest": "https://torneopal-sentinelsoftware.netdna-ssl.com//logo/palloliitto/2970x.png",
+    "sub_title": "",
+    "district": "splitasuomi",
+    "teams": [
+      {
+        "team_id": "60893",
+        "team_name": "PK-37",
+        "categories": [
+          {
+            "competition_id": "spljp16",
+            "competition_name": "SPL Jalkapallo 2016",
+            "competition_season": "2016",
+            "competition_active": "1",
+            "category_id": "MRC",
+            "category_name": "Regions Cup",
+            "category_team_name": "PK-37"
+          },
+          {
+            "competition_id": "itajalkapallo2016",
+            "competition_name": "Itä-Suomi Jalkapallo 2016",
+            "competition_season": "2016",
+            "competition_active": "1",
+            "category_id": "M3",
+            "category_name": "Kolmonen",
+            "category_team_name": "PK-37"
+          },
+          {
+            "competition_id": "spljp15",
+            "competition_name": "SPL Jalkapallo 2015",
+            "competition_season": "2015",
+            "competition_active": "0",
+            "category_id": "MSC",
+            "category_name": "Respect Suomen Cup",
+            "category_team_name": "PK-37"
+          }
+        ]
+      },
+      {
+        "team_id": "108345",
+        "team_name": "PK-37",
+        "categories": [
+          {
+            "competition_id": "itajalkapallo2016",
+            "competition_name": "Itä-Suomi Jalkapallo 2016",
+            "competition_season": "2016",
+            "competition_active": "1",
+            "category_id": "C15",
+            "category_name": "C15 (-01) normaalikenttä",
+            "category_team_name": "PK-37"
+          }
+        ]
+      }
+    ]
+  }
+}

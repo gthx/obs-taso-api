@@ -138,6 +138,20 @@ class TorneopalAPI {
   }
 
   /**
+   * Get specific team by team ID
+   */
+  async getTeam(teamId) {
+    return await this.makeRequest("getTeam", { team_id: teamId });
+  }
+
+  /**
+   * Get club information by club ID
+   */
+  async getClub(clubId) {
+    return await this.makeRequest("getClub", { club_id: clubId });
+  }
+
+  /**
    * Test API connection
    */
   async testConnection() {
@@ -183,6 +197,105 @@ class TorneopalAPI {
   clearStoredMatch() {
     localStorage.removeItem("selected-match-id");
     localStorage.removeItem("selected-match-data");
+  }
+
+  /**
+   * Get static local match ID
+   */
+  getLocalMatchId() {
+    return "local-match";
+  }
+
+  /**
+   * Create and store a local match
+   */
+  async createLocalMatch(matchData) {
+    const {
+      date,
+      time,
+      homeTeamId,
+      homeTeamData,
+      awayTeamName,
+      awayTeamLogo,
+      venue = "Local Venue",
+      category = "Local Match"
+    } = matchData;
+
+    const localMatchId = this.getLocalMatchId();
+    
+    const localMatch = {
+      match_id: localMatchId,
+      date,
+      time,
+      team_A_name: homeTeamData.team_name || "Home Team",
+      team_B_name: awayTeamName,
+      club_A_crest: homeTeamData.club_crest || "",
+      club_B_crest: awayTeamLogo || "",
+      venue_name: venue,
+      category_name: category,
+      is_local: true,
+      created_at: new Date().toISOString(),
+      home_team_id: homeTeamId,
+      home_team_data: homeTeamData
+    };
+
+    // Store local match data
+    const localMatches = this.getStoredLocalMatches();
+    localMatches[localMatchId] = localMatch;
+    localStorage.setItem("local-matches", JSON.stringify(localMatches));
+
+    return localMatch;
+  }
+
+  /**
+   * Get all stored local matches
+   */
+  getStoredLocalMatches() {
+    const stored = localStorage.getItem("local-matches");
+    return stored ? JSON.parse(stored) : {};
+  }
+
+  /**
+   * Get specific local match by ID
+   */
+  getLocalMatch(matchId) {
+    const localMatches = this.getStoredLocalMatches();
+    return localMatches[matchId] || null;
+  }
+
+  /**
+   * Check if match ID is a local match
+   */
+  isLocalMatch(matchId) {
+    return matchId === "local-match";
+  }
+
+  /**
+   * Enhanced getMatch that supports both local and remote matches
+   */
+  async getMatchEnhanced(matchId) {
+    if (this.isLocalMatch(matchId)) {
+      const localMatch = this.getLocalMatch(matchId);
+      if (localMatch) {
+        return { match: localMatch };
+      }
+      throw new Error("Local match not found");
+    } else {
+      return await this.getMatch(matchId);
+    }
+  }
+
+  /**
+   * Delete a local match
+   */
+  deleteLocalMatch(matchId) {
+    const localMatches = this.getStoredLocalMatches();
+    if (localMatches[matchId]) {
+      delete localMatches[matchId];
+      localStorage.setItem("local-matches", JSON.stringify(localMatches));
+      return true;
+    }
+    return false;
   }
 }
 

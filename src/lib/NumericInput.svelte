@@ -12,6 +12,7 @@
 
     function increment() {
         if (disabled) return;
+        if (max !== undefined && value >= max) return; // Don't increment if already at max
         const newValue = value + step;
         if (max === undefined || newValue <= max) {
             value = newValue;
@@ -21,6 +22,7 @@
 
     function decrement() {
         if (disabled) return;
+        if (value <= min) return; // Don't decrement if already at min
         const newValue = value - step;
         if (newValue >= min) {
             value = newValue;

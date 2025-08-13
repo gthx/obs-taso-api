@@ -96,11 +96,18 @@
 
         <!-- Period and time hanging below -->
         <div class="game-info">
-            <span class="period">{$matchData.period || 1}.</span>
-            {#if !$matchData.time}
-                <span class="time period-mode">--:--</span>
-            {:else}
+            {#if $matchData.period === 4}
+                <span class="period">JA</span>
                 <span class="time">{$matchData.time}</span>
+            {:else if $matchData.period === 5}
+                <span class="period">RL</span>
+            {:else}
+                <span class="period">{$matchData.period || 1}.</span>
+                {#if !$matchData.time}
+                    <span class="time period-mode">--:--</span>
+                {:else}
+                    <span class="time">{$matchData.time}</span>
+                {/if}
             {/if}
         </div>
     {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}

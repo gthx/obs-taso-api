@@ -14,25 +14,25 @@
     let connectionBoxExpanded = $state(false);
     let obsPreviewExpanded = $state(true);
     let showMatchPopup = $state(false);
-    
+
     // Score control state
     let scoreMode = $state("auto"); // "auto" or "manual"
     let autoScoreInterval = null;
     let apiScores = $state(null);
     let isPollingScores = $state(false);
-    
+
     // Time control state
     let timeMode = $state("auto"); // "auto", "manual", or "period"
-    
+
     // Global timer state
     let globalTimerActive = $state(false);
     let globalTimerInterval = null;
     let lastTick = 0;
     let accumulatedTime = 0;
-    
-    // Track if time input is being edited
-    let isEditingTime = $state(false);
-    let timeInputValue = $state("");
+
+    // Time override functionality
+    let overrideTime = $state("");
+    let isTimeOverrideActive = $state(false);
 
     // Torneopal API variables
     let torneopalApiKey = $state("");
@@ -40,17 +40,31 @@
     let torneopalEnabled = $derived(torneopalApiKey && matchId);
     let matchInfo = $state(null);
 
+    // Match type selection
+    let matchType = $state("remote"); // "remote" or "local"
+    
+    // Local match creation state
+    let localMatchData = $state({
+        homeTeamId: "",
+        awayTeamName: "",
+        awayTeamLogo: "",
+        date: "",
+        time: "",
+        venue: "Local Venue",
+        category: "Local Match",
+    });
+
     // Local copy of match data for form binding
     let homeTeamName = $state("");
     let homeTeamScore = $state(0);
     let awayTeamName = $state("");
     let awayTeamScore = $state(0);
     let period = $state(1);
-    let time = $state("20:00");
+    let time = $state("00:00");
 
     // Track previous period to detect changes
     let previousPeriod = $state(period);
-    
+
     // Subscribe to match data changes using $effect
     $effect(() => {
         if ($matchData) {
@@ -59,10 +73,10 @@
             awayTeamName = $matchData.awayTeam?.name || "";
             awayTeamScore = $matchData.awayTeam?.score || 0;
             period = $matchData.period || 1;
-            time = $matchData.time || "20:00";
+            time = $matchData.time || "00:00";
         }
     });
-    
+
     // Watch for period changes to reset time
     $effect(() => {
         if (period !== previousPeriod && timeMode === "manual") {
@@ -89,70 +103,88 @@
             isConnecting = false;
         }
     }
-    
+
     function disconnect() {
         obsWebSocket.disconnect();
     }
-    
+
     // Score control functions
     function setScoreMode(mode) {
         scoreMode = mode;
         localStorage.setItem("score-mode", mode);
-        
+
         // Score polling is now handled by global timer
         // No need to start/stop separate polling
     }
-    
+
     // Time control functions
     function setTimeMode(mode) {
         timeMode = mode;
         localStorage.setItem("time-mode", mode);
-        
+
         // Update overlay when time mode changes
         updateMatchData();
     }
-    
+
     async function fetchCurrentScore() {
         if (!torneopalEnabled) {
             return;
         }
-        
+
         try {
             const result = await torneopalApi.getScore(matchId);
             if (result && result.score) {
                 apiScores = result.score;
-                
+
                 // Update scores if in auto mode
                 if (scoreMode === "auto") {
                     // Only update scores if they have valid values from the API
-                    if (result.score.live_A !== "" && result.score.live_A !== null && result.score.live_A !== undefined) {
+                    if (
+                        result.score.live_A !== "" &&
+                        result.score.live_A !== null &&
+                        result.score.live_A !== undefined
+                    ) {
                         const newHomeScore = parseInt(result.score.live_A);
                         if (!isNaN(newHomeScore)) {
                             homeTeamScore = newHomeScore;
                         }
                     }
-                    
-                    if (result.score.live_B !== "" && result.score.live_B !== null && result.score.live_B !== undefined) {
+
+                    if (
+                        result.score.live_B !== "" &&
+                        result.score.live_B !== null &&
+                        result.score.live_B !== undefined
+                    ) {
                         const newAwayScore = parseInt(result.score.live_B);
                         if (!isNaN(newAwayScore)) {
                             awayTeamScore = newAwayScore;
                         }
                     }
-                    
+
                     // Update period and time based on time mode
                     if (timeMode === "auto") {
-                        if (result.score.live_period && result.score.live_period !== "-1" && result.score.live_period !== "") {
-                            const newPeriod = parseInt(result.score.live_period);
+                        if (
+                            result.score.live_period &&
+                            result.score.live_period !== "-1" &&
+                            result.score.live_period !== ""
+                        ) {
+                            const newPeriod = parseInt(
+                                result.score.live_period,
+                            );
                             if (!isNaN(newPeriod) && newPeriod > 0) {
                                 period = newPeriod;
                             }
                         }
-                        
-                        if (result.score.live_time_mmss && result.score.live_time_mmss !== "" && result.score.live_time_mmss !== "00:00") {
+
+                        if (
+                            result.score.live_time_mmss &&
+                            result.score.live_time_mmss !== "" &&
+                            result.score.live_time_mmss !== "00:00"
+                        ) {
                             time = result.score.live_time_mmss;
                         }
                     }
-                    
+
                     // Update overlay
                     await updateMatchData();
                 }
@@ -165,14 +197,14 @@
     // Global timer functions
     function startGlobalTimer() {
         if (globalTimerInterval) return;
-        
+
         globalTimerActive = true;
         lastTick = Date.now();
         accumulatedTime = 0;
-        
+
         globalTimerInterval = setInterval(handleGlobalTimerTick, 100); // 100ms tick rate
     }
-    
+
     function stopGlobalTimer() {
         globalTimerActive = false;
         if (globalTimerInterval) {
@@ -181,7 +213,7 @@
         }
         accumulatedTime = 0;
     }
-    
+
     function toggleGlobalTimer() {
         if (globalTimerActive) {
             stopGlobalTimer();
@@ -189,78 +221,85 @@
             startGlobalTimer();
         }
     }
-    
+
     function handleGlobalTimerTick() {
         const now = Date.now();
         const diff = now - lastTick;
         lastTick = now;
         accumulatedTime += diff; // Add 100ms
-        
+
         // Run 1-second logic when 1000ms have accumulated
         if (accumulatedTime >= 1000) {
             accumulatedTime = 0; // Reset accumulator
-            
+
             // Update time based on mode
             if (timeMode === "manual") {
                 incrementTime();
             }
-            
+
             // Always fetch scores when timer is active (for all modes)
             if (matchId && torneopalApiKey) {
                 fetchCurrentScore();
             }
         }
     }
-    
+
     function incrementTime() {
-        // Don't update time if user is editing it
-        if (isEditingTime) return;
-        
+
+        // Don't increment time during shootout (period 5)
+        if (period === 5) return;
+
         // Parse current time and increment by 1 second
-        const [minutes, seconds] = time.split(':').map(Number);
+        const [minutes, seconds] = time.split(":").map(Number);
         let totalSeconds = minutes * 60 + seconds + 1;
-        
-        // Stop at 20:00 (1200 seconds)
-        if (totalSeconds >= 1200) { // 20:00 = 1200 seconds
-            totalSeconds = 1200;
-            time = "20:00";
-            // Stop the timer when reaching 20:00
+
+        // Different max times based on period
+        let maxSeconds;
+        if (period === 4) {
+            maxSeconds = 300; // 5:00 for extra time (JA)
+        } else {
+            maxSeconds = 1200; // 20:00 for regular periods (1-3)
+        }
+
+        // Stop at max time for current period
+        if (totalSeconds >= maxSeconds) {
+            totalSeconds = maxSeconds;
+            const maxMinutes = Math.floor(maxSeconds / 60);
+            const maxSecondsRemainder = maxSeconds % 60;
+            time = `${maxMinutes.toString().padStart(2, "0")}:${maxSecondsRemainder.toString().padStart(2, "0")}`;
+            // Stop the timer when reaching max time
             stopGlobalTimer();
         } else {
             const newMinutes = Math.floor(totalSeconds / 60);
             const newSeconds = totalSeconds % 60;
-            time = `${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}`;
+            time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
         }
-        
+
         // Update overlay
         updateMatchData();
     }
-    
+
     function decrementTime() {
-        // Don't update time if user is editing it
-        if (isEditingTime) return;
-        
+
         // Parse current time and decrement by 1 second
-        const [minutes, seconds] = time.split(':').map(Number);
+        const [minutes, seconds] = time.split(":").map(Number);
         let totalSeconds = minutes * 60 + seconds - 1;
-        
+
         // Don't go below 0:00
         if (totalSeconds < 0) {
             totalSeconds = 0;
         }
-        
+
         const newMinutes = Math.floor(totalSeconds / 60);
         const newSeconds = totalSeconds % 60;
-        time = `${newMinutes.toString().padStart(2, '0')}:${newSeconds.toString().padStart(2, '0')}`;
-        
+        time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
+
         // Update overlay
         updateMatchData();
     }
-    
+
     function adjustTimeBySeconds(delta) {
-        // Don't update time if user is editing it
-        if (isEditingTime) return;
-        
+
         if (delta > 0) {
             incrementTime();
         } else if (delta < 0) {
@@ -268,40 +307,60 @@
         }
     }
 
-    function formatTimeInput(inputElement) {
-        let value = (timeInputValue || inputElement.value).replace(/\D/g, '');
+    function applyTimeOverride() {
+        if (!overrideTime) return;
         
+        let value = overrideTime.replace(/\D/g, "");
+
         // Pad with leading zeros if less than 4 digits
         if (value.length < 4) {
-            value = value.padStart(4, '0');
+            value = value.padStart(4, "0");
         }
-        
+
         // Extract minutes and seconds
         let minutes = value.substring(0, 2);
         let seconds = value.substring(2, 4);
-        
+
         // Validate seconds (00-59)
         const secondsNum = parseInt(seconds);
         if (secondsNum > 59) {
-            seconds = '59';
+            seconds = "59";
         }
-        
-        // Validate overall time range (0000 to 2000)
+
+        // Validate time range based on period
         const totalTime = minutes + seconds;
         const numValue = parseInt(totalTime);
-        if (numValue > 2000) {
-            minutes = '20';
-            seconds = '00';
+        
+        // Different max times based on period
+        let maxTime;
+        if (period === 4) {
+            maxTime = 500; // 05:00 for extra time
+        } else if (period === 5) {
+            maxTime = 0; // No time counting for shootout
+        } else {
+            maxTime = 2000; // 20:00 for regular periods
         }
         
-        // Format as MM:SS
+        if (numValue > maxTime) {
+            if (period === 4) {
+                minutes = "05";
+                seconds = "00";
+            } else if (period === 5) {
+                minutes = "00";
+                seconds = "00";
+            } else {
+                minutes = "20";
+                seconds = "00";
+            }
+        }
+
+        // Format as MM:SS and override the current game time
         const formattedTime = `${minutes}:${seconds}`;
-        
-        // Update both the input display and the time state
-        inputElement.value = formattedTime;
         time = formattedTime;
         
-        // Update the overlay
+        // Clear the override input and update overlay
+        overrideTime = "";
+        isTimeOverrideActive = false;
         updateMatchData();
     }
 
@@ -324,15 +383,15 @@
 
     async function updateMatchData() {
         const data = {
-            homeTeam: { 
-                name: homeTeamName, 
+            homeTeam: {
+                name: homeTeamName,
                 score: homeTeamScore,
-                logo: matchInfo?.homeTeamLogo || ""
+                logo: matchInfo?.homeTeamLogo || "",
             },
-            awayTeam: { 
-                name: awayTeamName, 
+            awayTeam: {
+                name: awayTeamName,
                 score: awayTeamScore,
-                logo: matchInfo?.awayTeamLogo || ""
+                logo: matchInfo?.awayTeamLogo || "",
             },
             period,
             time: timeMode === "period" ? "" : time, // Empty time in period mode
@@ -342,7 +401,6 @@
 
         await obsWebSocket.setMatchData(data);
     }
-
 
     // Load saved connection settings from localStorage
     function loadSavedSettings() {
@@ -355,13 +413,13 @@
         if (savedPassword) {
             wsPassword = savedPassword;
         }
-        
+
         // Load score mode preference
         const savedScoreMode = localStorage.getItem("score-mode");
         if (savedScoreMode) {
             scoreMode = savedScoreMode;
         }
-        
+
         // Load time mode preference
         const savedTimeMode = localStorage.getItem("time-mode");
         if (savedTimeMode) {
@@ -388,6 +446,12 @@
                 homeTeamName = cachedData.homeTeam || "Home";
                 awayTeamName = cachedData.awayTeam || "Away";
             }
+        }
+
+        // Load stored home team ID for local match form
+        const savedHomeTeamId = localStorage.getItem("home-team-id");
+        if (savedHomeTeamId) {
+            localMatchData.homeTeamId = savedHomeTeamId;
         }
     }
 
@@ -454,9 +518,9 @@
             await updateMatchData();
         }
 
-        // Then fetch fresh data from API
+        // Then fetch fresh data from API (supports both local and remote matches)
         try {
-            const result = await torneopalApi.getMatch(matchId);
+            const result = await torneopalApi.getMatchEnhanced(matchId);
 
             if (result && result.match) {
                 const match = result.match;
@@ -506,30 +570,122 @@
                 );
             }
         }
-        
+
         // Score polling is now handled by global timer
         // Timer can be started manually via spacebar or play button
+    }
+
+    // Create local match function
+    async function createLocalMatch() {
+        if (
+            !localMatchData.homeTeamId ||
+            !localMatchData.awayTeamName ||
+            !localMatchData.date ||
+            !localMatchData.time
+        ) {
+            alert("Please fill in all required fields");
+            return;
+        }
+
+        if (!torneopalApiKey) {
+            alert("Please enter API key to fetch team data");
+            return;
+        }
+
+        try {
+            // Fetch home team data first
+            const teamResult = await torneopalApi.getTeam(
+                localMatchData.homeTeamId,
+            );
+            if (!teamResult || !teamResult.team) {
+                alert("Team not found. Please check the team ID.");
+                return;
+            }
+
+            const homeTeamData = teamResult.team;
+
+            // Try to get club data for logo if available
+            let clubCrest = "";
+            if (homeTeamData.club_id) {
+                try {
+                    const clubResult = await torneopalApi.getClub(
+                        homeTeamData.club_id,
+                    );
+                    if (
+                        clubResult &&
+                        clubResult.club &&
+                        clubResult.club.crest
+                    ) {
+                        clubCrest = clubResult.club.crest;
+                    }
+                } catch (error) {
+                    console.warn("Could not fetch club data:", error);
+                }
+            }
+
+            // Create the local match
+            const matchData = {
+                date: localMatchData.date,
+                time: localMatchData.time,
+                homeTeamId: localMatchData.homeTeamId,
+                homeTeamData: {
+                    ...homeTeamData,
+                    club_crest: clubCrest,
+                },
+                awayTeamName: localMatchData.awayTeamName,
+                awayTeamLogo: localMatchData.awayTeamLogo,
+                venue: localMatchData.venue || "Local Venue",
+                category: localMatchData.category || "Local Match",
+            };
+
+            const createdMatch = await torneopalApi.createLocalMatch(matchData);
+
+            // Set the created match as current
+            matchId = createdMatch.match_id;
+            localStorage.setItem("torneopal-match-id", matchId);
+            localStorage.setItem("home-team-id", localMatchData.homeTeamId);
+
+            // Load the match
+            await resetGame();
+
+            // Set game time to 00:00 for local matches
+            time = "00:00";
+            await updateMatchData();
+
+            // Close popup
+            showMatchPopup = false;
+
+            alert("Local match created successfully!");
+        } catch (error) {
+            alert(`Failed to create local match: ${error.message}`);
+        }
     }
 
     // Handle keyboard shortcuts
     function handleKeydown(event) {
         // Don't handle keys when typing in inputs or clicking buttons
-        if (event.target.tagName === 'INPUT' || event.target.tagName === 'BUTTON') {
+        if (
+            event.target.tagName === "INPUT" ||
+            event.target.tagName === "BUTTON"
+        ) {
             return;
         }
-        
+
         // Spacebar - toggle timer
-        if (event.code === 'Space') {
+        if (event.code === "Space") {
             event.preventDefault();
             toggleGlobalTimer();
         }
-        
+
         // Arrow keys - adjust time in manual mode
-        if (timeMode === 'manual' && !isEditingTime && $connectionStatus === 'connected') {
-            if (event.code === 'ArrowUp') {
+        if (
+            timeMode === "manual" &&
+            $connectionStatus === "connected"
+        ) {
+            if (event.code === "ArrowUp") {
                 event.preventDefault();
                 incrementTime();
-            } else if (event.code === 'ArrowDown') {
+            } else if (event.code === "ArrowDown") {
                 event.preventDefault();
                 decrementTime();
             }
@@ -538,19 +694,26 @@
 
     onMount(async () => {
         loadSavedSettings();
-        
+
         // Auto-connect to OBS WebSocket
         if ($connectionStatus === "disconnected") {
             await connect();
         }
-        
+
+        // Initialize local match form with current date/time
+        const now = new Date();
+        const today = now.toISOString().split("T")[0];
+        const currentTime = now.toTimeString().split(" ")[0].substring(0, 5);
+        localMatchData.date = today;
+        localMatchData.time = currentTime;
+
         // Add global keydown listener
-        document.addEventListener('keydown', handleKeydown);
+        document.addEventListener("keydown", handleKeydown);
 
         return () => {
             obsWebSocket.disconnect();
             stopGlobalTimer();
-            document.removeEventListener('keydown', handleKeydown);
+            document.removeEventListener("keydown", handleKeydown);
         };
     });
 </script>
@@ -563,8 +726,8 @@
                 <div class="match-info-section">
                     <div class="match-teams-info">
                         {#if matchInfo.homeTeamLogo}
-                            <img 
-                                src={matchInfo.homeTeamLogo} 
+                            <img
+                                src={matchInfo.homeTeamLogo}
                                 alt={matchInfo.homeTeam}
                                 class="team-logo"
                             />
@@ -573,14 +736,16 @@
                         <span class="vs">vs</span>
                         <span class="team-name">{matchInfo.awayTeam}</span>
                         {#if matchInfo.awayTeamLogo}
-                            <img 
-                                src={matchInfo.awayTeamLogo} 
+                            <img
+                                src={matchInfo.awayTeamLogo}
                                 alt={matchInfo.awayTeam}
                                 class="team-logo"
                             />
                         {/if}
                         {#if matchInfo.category}
-                            <span class="match-category">{matchInfo.category}</span>
+                            <span class="match-category"
+                                >{matchInfo.category}</span
+                            >
                         {/if}
                     </div>
                     <div class="match-details-info">
@@ -593,11 +758,13 @@
                                 month: "numeric",
                             })}
                         </span>
-                        <span class="match-time">🕐 {matchInfo.time.substring(0, 5)}</span>
+                        <span class="match-time"
+                            >🕐 {matchInfo.time.substring(0, 5)}</span
+                        >
                         <span class="match-venue">📍 {matchInfo.venue}</span>
-                        <button 
+                        <button
                             class="change-match-btn"
-                            onclick={() => showMatchPopup = true}
+                            onclick={() => (showMatchPopup = true)}
                             title="Change Match"
                         >
                             ⚙️
@@ -605,9 +772,9 @@
                     </div>
                 </div>
             {:else}
-                <button 
+                <button
                     class="load-match-btn"
-                    onclick={() => showMatchPopup = true}
+                    onclick={() => (showMatchPopup = true)}
                     title="Load Match"
                 >
                     🔄 Load Match
@@ -615,16 +782,48 @@
             {/if}
         </div>
     </div>
-    
+
     <!-- Match Settings Popup -->
     {#if showMatchPopup}
-        <div class="popup-overlay" onclick={(e) => { if (e.target === e.currentTarget) showMatchPopup = false; }}>
+        <div
+            class="popup-overlay"
+            onclick={(e) => {
+                if (e.target === e.currentTarget) showMatchPopup = false;
+            }}
+        >
             <div class="popup-modal">
                 <div class="popup-header">
                     <h3>Match Settings</h3>
-                    <button class="popup-close" onclick={() => showMatchPopup = false}>✕</button>
+                    <button
+                        class="popup-close"
+                        onclick={() => (showMatchPopup = false)}>✕</button
+                    >
                 </div>
                 <div class="popup-content">
+                    <!-- Match Type Selection -->
+                    <div class="popup-field">
+                        <label>Match Type:</label>
+                        <div class="match-type-selector">
+                            <label class="radio-option">
+                                <input
+                                    type="radio"
+                                    bind:group={matchType}
+                                    value="remote"
+                                />
+                                <span class="radio-text">Remote Match</span>
+                            </label>
+                            <label class="radio-option">
+                                <input
+                                    type="radio"
+                                    bind:group={matchType}
+                                    value="local"
+                                />
+                                <span class="radio-text">Local Match</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- API Key (always required) -->
                     <div class="popup-field">
                         <label for="api-key">Torneopal API Key:</label>
                         <input
@@ -636,37 +835,119 @@
                         />
                     </div>
                     
-                    <div class="popup-field">
-                        <label for="match-id">Match ID:</label>
-                        <input
-                            id="match-id"
-                            type="text"
-                            placeholder="Enter Match ID"
-                            bind:value={matchId}
-                            onchange={saveTorneopalSettings}
-                        />
-                    </div>
-                    
-                    <div class="popup-actions">
-                        <button
-                            class="popup-load-btn"
-                            onclick={async () => {
-                                await resetGame();
-                                if (matchInfo) {
-                                    showMatchPopup = false;
-                                }
-                            }}
-                            disabled={!matchId || !torneopalApiKey}
-                        >
-                            🔄 Load Match
-                        </button>
-                        <button
-                            class="popup-cancel-btn"
-                            onclick={() => showMatchPopup = false}
-                        >
-                            Cancel
-                        </button>
-                    </div>
+                    {#if matchType === "remote"}
+                        <!-- Remote Match Fields -->
+                        <div class="popup-field">
+                            <label for="match-id">Match ID:</label>
+                            <input
+                                id="match-id"
+                                type="text"
+                                placeholder="Enter Match ID"
+                                bind:value={matchId}
+                                onchange={saveTorneopalSettings}
+                            />
+                        </div>
+                        
+                        <div class="popup-actions">
+                            <button
+                                class="popup-load-btn"
+                                onclick={async () => {
+                                    await resetGame();
+                                    if (matchInfo) {
+                                        showMatchPopup = false;
+                                    }
+                                }}
+                                disabled={!matchId || !torneopalApiKey}
+                            >
+                                🔄 Load Match
+                            </button>
+                            <button
+                                class="popup-cancel-btn"
+                                onclick={() => (showMatchPopup = false)}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    {:else}
+                        <!-- Local Match Fields -->
+                        <div class="popup-field">
+                            <label for="home-team-id">Home Team ID:</label>
+                            <input
+                                id="home-team-id"
+                                type="text"
+                                placeholder="Enter Team ID (e.g. 92187)"
+                                bind:value={localMatchData.homeTeamId}
+                            />
+                        </div>
+                        
+                        <div class="popup-field">
+                            <label for="away-team-name">Away Team Name:</label>
+                            <input
+                                id="away-team-name"
+                                type="text"
+                                placeholder="Enter away team name"
+                                bind:value={localMatchData.awayTeamName}
+                            />
+                        </div>
+                        
+                        <div class="popup-field">
+                            <label for="away-team-logo">Away Team Logo URL (optional):</label>
+                            <input
+                                id="away-team-logo"
+                                type="text"
+                                placeholder="https://example.com/logo.png"
+                                bind:value={localMatchData.awayTeamLogo}
+                            />
+                        </div>
+                        
+                        <div class="popup-field">
+                            <label for="match-date">Match Date:</label>
+                            <input
+                                id="match-date"
+                                type="date"
+                                bind:value={localMatchData.date}
+                            />
+                        </div>
+                        
+                        <div class="popup-field">
+                            <label for="match-time">Match Time:</label>
+                            <input
+                                id="match-time"
+                                type="time"
+                                bind:value={localMatchData.time}
+                            />
+                        </div>
+                        
+                        <div class="popup-field">
+                            <label for="venue">Venue:</label>
+                            <input
+                                id="venue"
+                                type="text"
+                                placeholder="Local Venue"
+                                bind:value={localMatchData.venue}
+                            />
+                        </div>
+                        
+                        <div class="popup-actions">
+                            <button
+                                class="popup-create-btn"
+                                onclick={createLocalMatch}
+                                disabled={!localMatchData.homeTeamId ||
+                                    !localMatchData.awayTeamName ||
+                                    !localMatchData.date ||
+                                    !localMatchData.time ||
+                                    !torneopalApiKey}
+                            >
+                                ✅ Create Local Match
+                            </button>
+                            <button
+                                class="popup-cancel-btn"
+                                onclick={() => (showMatchPopup = false)}
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    {/if}
                 </div>
             </div>
         </div>
@@ -677,11 +958,13 @@
         <div class="active-timer-section" class:active={globalTimerActive}>
             <div class="timer-controls">
                 <span class="section-label">Active:</span>
-                <button 
+                <button
                     class="timer-button"
                     class:active={globalTimerActive}
                     onclick={toggleGlobalTimer}
-                    title={globalTimerActive ? "Pause Timer (Spacebar)" : "Start Timer (Spacebar)"}
+                    title={globalTimerActive
+                        ? "Pause Timer (Spacebar)"
+                        : "Start Timer (Spacebar)"}
                 >
                     {globalTimerActive ? "⏸️" : "▶️"}
                 </button>
@@ -698,39 +981,41 @@
             <div class="score-mode-selector">
                 <span class="score-label">Score:</span>
                 <label class="radio-option">
-                    <input 
-                        type="radio" 
-                        bind:group={scoreMode} 
+                    <input
+                        type="radio"
+                        bind:group={scoreMode}
                         value="auto"
                         onchange={() => setScoreMode("auto")}
                     />
                     <span class="radio-text">auto</span>
                 </label>
                 <label class="radio-option">
-                    <input 
-                        type="radio" 
-                        bind:group={scoreMode} 
+                    <input
+                        type="radio"
+                        bind:group={scoreMode}
                         value="manual"
                         onchange={() => setScoreMode("manual")}
                     />
                     <span class="radio-text">manual</span>
                 </label>
             </div>
-            
+
             <div class="score-display">
-                <NumericInput 
+                <NumericInput
                     bind:value={homeTeamScore}
-                    disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    disabled={scoreMode === "auto" ||
+                        $connectionStatus !== "connected"}
                     autoMode={scoreMode === "auto"}
                     min={0}
                     onchange={updateMatchData}
                 />
-                
+
                 <span class="score-separator">-</span>
-                
-                <NumericInput 
+
+                <NumericInput
                     bind:value={awayTeamScore}
-                    disabled={scoreMode === "auto" || $connectionStatus !== "connected"}
+                    disabled={scoreMode === "auto" ||
+                        $connectionStatus !== "connected"}
                     autoMode={scoreMode === "auto"}
                     min={0}
                     onchange={updateMatchData}
@@ -745,89 +1030,117 @@
             <div class="time-mode-selector">
                 <span class="time-label">Time:</span>
                 <label class="radio-option">
-                    <input 
-                        type="radio" 
-                        bind:group={timeMode} 
+                    <input
+                        type="radio"
+                        bind:group={timeMode}
                         value="auto"
                         onchange={() => setTimeMode("auto")}
                     />
                     <span class="radio-text">auto</span>
                 </label>
                 <label class="radio-option">
-                    <input 
-                        type="radio" 
-                        bind:group={timeMode} 
+                    <input
+                        type="radio"
+                        bind:group={timeMode}
                         value="manual"
                         onchange={() => setTimeMode("manual")}
                     />
                     <span class="radio-text">manual</span>
                 </label>
                 <label class="radio-option">
-                    <input 
-                        type="radio" 
-                        bind:group={timeMode} 
+                    <input
+                        type="radio"
+                        bind:group={timeMode}
                         value="period"
                         onchange={() => setTimeMode("period")}
                     />
                     <span class="radio-text">period</span>
                 </label>
             </div>
-            
+
             <div class="time-display">
                 <div class="time-field">
                     <span class="field-label">Period:</span>
-                    <NumericInput 
+                    <NumericInput
                         bind:value={period}
-                        disabled={timeMode === "auto" || $connectionStatus !== "connected"}
+                        disabled={timeMode === "auto" ||
+                            $connectionStatus !== "connected"}
                         autoMode={timeMode === "auto"}
                         min={1}
-                        max={3}
+                        max={5}
                         width="60px"
                         onchange={updateMatchData}
                     />
                 </div>
-                
+
                 <div class="time-field">
                     <span class="field-label">Time:</span>
-                    <input 
-                        type="text" 
+                    <input
+                        type="text"
                         class="time-input"
                         class:auto={timeMode === "auto"}
                         class:disabled={timeMode === "period"}
-                        value={isEditingTime ? timeInputValue : time}
-                        onfocus={(e) => {
-                            if (timeMode !== "auto" && timeMode !== "period" && $connectionStatus === "connected") {
-                                isEditingTime = true;
-                                // Convert MM:SS to MMSS for editing
-                                timeInputValue = time.replace(':', '');
-                                e.target.value = timeInputValue;
+                        bind:value={overrideTime}
+                        onclick={(e) => {
+                            if (
+                                timeMode !== "auto" &&
+                                timeMode !== "period" &&
+                                $connectionStatus === "connected"
+                            ) {
                                 e.target.select();
+                            }
+                        }}
+                        onfocus={(e) => {
+                            if (
+                                timeMode !== "auto" &&
+                                timeMode !== "period" &&
+                                $connectionStatus === "connected"
+                            ) {
+                                isTimeOverrideActive = true;
+                                // Pre-fill with current game time for easy editing
+                                if (!overrideTime) {
+                                    overrideTime = time.replace(":", "");
+                                }
+                                // Always select the value for easy override
+                                setTimeout(() => e.target.select(), 0);
                             }
                         }}
                         oninput={(e) => {
                             // Only allow digits, max 4 characters
-                            let value = e.target.value.replace(/\D/g, '');
+                            let value = e.target.value.replace(/\D/g, "");
                             if (value.length > 4) {
                                 value = value.substring(0, 4);
                             }
-                            timeInputValue = value;
-                            e.target.value = value;
+                            overrideTime = value;
                         }}
-                        onblur={(e) => {
-                            isEditingTime = false;
-                            formatTimeInput(e.target);
-                            timeInputValue = "";
+                        onblur={() => {
+                            if (isTimeOverrideActive && overrideTime) {
+                                applyTimeOverride();
+                            } else {
+                                overrideTime = "";
+                                isTimeOverrideActive = false;
+                            }
                         }}
                         onkeydown={(e) => {
-                            if (e.key === 'Enter') {
-                                isEditingTime = false;
-                                formatTimeInput(e.target);
-                                timeInputValue = "";
+                            if (e.key === "Enter") {
+                                if (overrideTime) {
+                                    applyTimeOverride();
+                                } else {
+                                    overrideTime = "";
+                                    isTimeOverrideActive = false;
+                                }
+                                e.target.blur();
+                            }
+                            if (e.key === "Escape") {
+                                overrideTime = "";
+                                isTimeOverrideActive = false;
                                 e.target.blur();
                             }
                         }}
-                        disabled={timeMode === "auto" || timeMode === "period" || $connectionStatus !== "connected"}
-                        placeholder="MMSS"
+                        disabled={timeMode === "auto" ||
+                            timeMode === "period" ||
+                            $connectionStatus !== "connected"}
+                        placeholder={isTimeOverrideActive ? "MMSS" : time}
                         maxlength="4"
                     />
                 </div>
@@ -845,16 +1158,24 @@
             <span class="preview-title">Preview</span>
             <div class="preview-actions">
                 {#if $connectionStatus === "connected" && obsPreviewExpanded}
-                    <button class="copy-url-icon" onclick={copyOverlayUrl} title="Copy Overlay URL">
+                    <button
+                        class="copy-url-icon"
+                        onclick={copyOverlayUrl}
+                        title="Copy Overlay URL"
+                    >
                         📋
                     </button>
-                    <button class="disconnect-icon" onclick={disconnect} title="Disconnect">
+                    <button
+                        class="disconnect-icon"
+                        onclick={disconnect}
+                        title="Disconnect"
+                    >
                         ❌
                     </button>
                 {/if}
-                <button 
-                    class="expand-icon" 
-                    onclick={() => obsPreviewExpanded = !obsPreviewExpanded}
+                <button
+                    class="expand-icon"
+                    onclick={() => (obsPreviewExpanded = !obsPreviewExpanded)}
                     title={obsPreviewExpanded ? "Collapse" : "Expand"}
                 >
                     {obsPreviewExpanded ? "▼" : "▲"}
@@ -864,53 +1185,63 @@
 
         {#if obsPreviewExpanded}
             {#if $connectionStatus !== "connected"}
-            <div class="preview-auth-info">
-                <h4>OBS WebSocket Configuration</h4>
-                <div class="auth-field">
-                    <label>URL:</label>
-                    <input
-                        type="text"
-                        value={wsUrl}
-                        onchange={(e) => {
-                            wsUrl = e.target.value;
-                            saveSettings();
-                        }}
-                        readonly
-                    />
-                </div>
-                <div class="auth-field">
-                    <label>Password:</label>
-                    <input
-                        type="password"
-                        value={wsPassword}
-                        onchange={(e) => {
-                            wsPassword = e.target.value;
-                            saveSettings();
-                        }}
-                        readonly
-                    />
-                </div>
-                <button
-                    class="connect-button"
-                    onclick={connect}
-                    disabled={isConnecting}
-                >
-                    {isConnecting ? "Connecting..." : "Connect to OBS"}
-                </button>
-            </div>
-            {:else}
-            <div class="preview-match-data">
-                <div class="preview-teams">
-                    <span class="home-preview">{homeTeamName || "Home"}</span>
-                    <span class="score-preview"
-                        >{homeTeamScore} - {awayTeamScore}</span
+                <div class="preview-auth-info">
+                    <h4>OBS WebSocket Configuration</h4>
+                    <div class="auth-field">
+                        <label>URL:</label>
+                        <input
+                            type="text"
+                            value={wsUrl}
+                            onchange={(e) => {
+                                wsUrl = e.target.value;
+                                saveSettings();
+                            }}
+                            readonly
+                        />
+                    </div>
+                    <div class="auth-field">
+                        <label>Password:</label>
+                        <input
+                            type="password"
+                            value={wsPassword}
+                            onchange={(e) => {
+                                wsPassword = e.target.value;
+                                saveSettings();
+                            }}
+                            readonly
+                        />
+                    </div>
+                    <button
+                        class="connect-button"
+                        onclick={connect}
+                        disabled={isConnecting}
                     >
-                    <span class="away-preview">{awayTeamName || "Away"}</span>
+                        {isConnecting ? "Connecting..." : "Connect to OBS"}
+                    </button>
                 </div>
-                <div class="preview-game-info">
-                    Period {period} | {time}
+            {:else}
+                <div class="preview-match-data">
+                    <div class="preview-teams">
+                        <span class="home-preview"
+                            >{homeTeamName || "Home"}</span
+                        >
+                        <span class="score-preview"
+                            >{homeTeamScore} - {awayTeamScore}</span
+                        >
+                        <span class="away-preview"
+                            >{awayTeamName || "Away"}</span
+                        >
+                    </div>
+                    <div class="preview-game-info">
+                        {#if period === 4}
+                            JA | {time}
+                        {:else if period === 5}
+                            RL
+                        {:else}
+                            Period {period} | {time}
+                        {/if}
+                    </div>
                 </div>
-            </div>
             {/if}
         {/if}
     </div>
@@ -923,9 +1254,11 @@
         margin: 0;
         transition: background-color 0.3s ease;
     }
-    
+
     :global(body:has(.admin-container.timer-active)) {
-        background: linear-gradient(rgba(76, 175, 80, 0.05), rgba(76, 175, 80, 0.05)), #121212;
+        background:
+            linear-gradient(rgba(76, 175, 80, 0.05), rgba(76, 175, 80, 0.05)),
+            #121212;
     }
 
     .admin-container {
@@ -952,30 +1285,34 @@
         max-width: 800px;
         transition: all 0.3s ease;
     }
-    
+
     .active-timer-section.active {
         border-color: #4caf50;
-        background: linear-gradient(135deg, #1e1e1e 0%, rgba(76, 175, 80, 0.1) 100%);
+        background: linear-gradient(
+            135deg,
+            #1e1e1e 0%,
+            rgba(76, 175, 80, 0.1) 100%
+        );
     }
-    
+
     .active-timer-section .timer-controls {
         display: flex;
         align-items: center;
         gap: 15px;
     }
-    
+
     .active-timer-section .section-label {
         font-size: 16px;
         font-weight: bold;
         color: #fff;
     }
-    
+
     .active-timer-section .timer-status {
         font-size: 14px;
         color: #aaa;
         font-weight: bold;
     }
-    
+
     .active-timer-section.active .timer-status {
         color: #4caf50;
     }
@@ -1001,7 +1338,7 @@
         justify-content: space-between;
         min-height: 40px;
     }
-    
+
     .load-match-btn {
         padding: 6px 16px;
         background: #ff5722;
@@ -1013,11 +1350,11 @@
         cursor: pointer;
         transition: background 0.2s;
     }
-    
+
     .load-match-btn:hover {
         background: #ff7043;
     }
-    
+
     .match-info-section {
         display: flex;
         align-items: center;
@@ -1025,14 +1362,14 @@
         width: 100%;
         gap: 30px;
     }
-    
+
     .match-teams-info {
         display: flex;
         align-items: center;
         gap: 12px;
         font-size: 16px;
     }
-    
+
     .team-logo {
         width: 32px;
         height: 32px;
@@ -1041,17 +1378,17 @@
         border-radius: 4px;
         padding: 2px;
     }
-    
+
     .team-name {
         font-weight: bold;
         color: #fff;
     }
-    
+
     .vs {
         color: #888;
         font-size: 14px;
     }
-    
+
     .match-category {
         padding: 2px 8px;
         background: #2a2a2a;
@@ -1060,7 +1397,7 @@
         color: #aaa;
         margin-left: 8px;
     }
-    
+
     .match-details-info {
         display: flex;
         align-items: center;
@@ -1068,13 +1405,13 @@
         font-size: 14px;
         color: #aaa;
     }
-    
+
     .match-date,
     .match-time,
     .match-venue {
         white-space: nowrap;
     }
-    
+
     .change-match-btn {
         background: transparent;
         border: 1px solid #444;
@@ -1085,7 +1422,7 @@
         transition: all 0.2s;
         margin-left: 12px;
     }
-    
+
     .change-match-btn:hover {
         background: #2a2a2a;
         border-color: #2196f3;
@@ -1104,7 +1441,7 @@
         justify-content: center;
         z-index: 2000;
     }
-    
+
     .popup-modal {
         background: #1e1e1e;
         border: 2px solid #333;
@@ -1113,7 +1450,7 @@
         max-width: 500px;
         box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
     }
-    
+
     .popup-header {
         display: flex;
         justify-content: space-between;
@@ -1121,13 +1458,13 @@
         padding: 16px 20px;
         border-bottom: 1px solid #333;
     }
-    
+
     .popup-header h3 {
         margin: 0;
         color: #fff;
         font-size: 18px;
     }
-    
+
     .popup-close {
         background: transparent;
         border: none;
@@ -1142,26 +1479,26 @@
         justify-content: center;
         transition: color 0.2s;
     }
-    
+
     .popup-close:hover {
         color: #fff;
     }
-    
+
     .popup-content {
         padding: 20px;
     }
-    
+
     .popup-field {
         margin-bottom: 20px;
     }
-    
+
     .popup-field label {
         display: block;
         margin-bottom: 8px;
         color: #aaa;
         font-size: 14px;
     }
-    
+
     .popup-field input {
         width: 100%;
         padding: 10px;
@@ -1172,19 +1509,19 @@
         font-size: 14px;
         box-sizing: border-box;
     }
-    
+
     .popup-field input:focus {
         outline: none;
         border-color: #2196f3;
     }
-    
+
     .popup-actions {
         display: flex;
         gap: 12px;
         justify-content: flex-end;
         margin-top: 24px;
     }
-    
+
     .popup-load-btn {
         padding: 10px 20px;
         background: #ff5722;
@@ -1196,17 +1533,54 @@
         cursor: pointer;
         transition: background 0.2s;
     }
-    
+
     .popup-load-btn:hover:not(:disabled) {
         background: #ff7043;
     }
-    
+
     .popup-load-btn:disabled {
         background: #555;
         cursor: not-allowed;
         opacity: 0.6;
     }
-    
+
+    .popup-create-btn {
+        padding: 10px 20px;
+        background: #4caf50;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .popup-create-btn:hover:not(:disabled) {
+        background: #66bb6a;
+    }
+
+    .popup-create-btn:disabled {
+        background: #555;
+        cursor: not-allowed;
+        opacity: 0.6;
+    }
+
+    .popup-secondary-btn {
+        padding: 10px 20px;
+        background: #2196f3;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 14px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .popup-secondary-btn:hover {
+        background: #42a5f5;
+    }
+
     .popup-cancel-btn {
         padding: 10px 20px;
         background: transparent;
@@ -1217,11 +1591,17 @@
         cursor: pointer;
         transition: all 0.2s;
     }
-    
+
     .popup-cancel-btn:hover {
         background: #2a2a2a;
         color: #fff;
         border-color: #666;
+    }
+    
+    .match-type-selector {
+        display: flex;
+        gap: 20px;
+        margin-top: 8px;
     }
 
     /* Preview Box */
@@ -1239,12 +1619,12 @@
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
         transition: all 0.3s ease;
     }
-    
+
     .obs-preview-box.collapsed {
         min-width: 200px;
         padding: 12px;
     }
-    
+
     .obs-preview-box.collapsed .preview-header {
         margin-bottom: 0;
         padding-bottom: 0;
@@ -1263,13 +1643,13 @@
         padding-bottom: 8px;
         border-bottom: 1px solid #333;
     }
-    
+
     .preview-actions {
         display: flex;
         align-items: center;
         gap: 8px;
     }
-    
+
     .copy-url-icon,
     .disconnect-icon,
     .expand-icon {
@@ -1281,22 +1661,22 @@
         border-radius: 4px;
         transition: all 0.2s;
     }
-    
+
     .expand-icon {
         font-size: 12px;
         padding: 4px 6px;
     }
-    
+
     .expand-icon:hover {
         background: #2a2a2a;
         border-color: #2196f3;
     }
-    
+
     .copy-url-icon:hover {
         background: #2a2a2a;
         border-color: #ff9800;
     }
-    
+
     .disconnect-icon:hover {
         background: #2a2a2a;
         border-color: #ef5350;
@@ -1307,7 +1687,6 @@
         font-size: 14px;
         color: #fff;
     }
-
 
     .preview-auth-info h4 {
         margin: 0 0 12px 0;
@@ -1382,7 +1761,6 @@
         margin-bottom: 12px;
     }
 
-
     .connection-form {
         display: flex;
         flex-direction: column;
@@ -1413,7 +1791,6 @@
     .connected-actions {
         text-align: center;
     }
-
 
     .connection-note {
         margin-top: 5px;
@@ -1548,7 +1925,6 @@
         color: #ffffff;
     }
 
-
     .update-button {
         display: block;
         margin: 20px auto;
@@ -1560,7 +1936,7 @@
     .update-button:hover {
         background: #66bb6a;
     }
-    
+
     /* Score Controls */
     .score-controls {
         background: #1e1e1e;
@@ -1575,23 +1951,23 @@
         gap: 30px;
         transition: border-color 0.2s;
     }
-    
+
     .score-controls.auto-mode {
         border-color: #2196f3;
     }
-    
+
     .score-mode-selector {
         display: flex;
         align-items: center;
         gap: 15px;
     }
-    
+
     .score-label {
         font-size: 16px;
         font-weight: bold;
         color: #fff;
     }
-    
+
     .radio-option {
         display: flex;
         align-items: center;
@@ -1600,35 +1976,38 @@
         color: #aaa;
         font-size: 14px;
     }
-    
+
     .radio-option input[type="radio"] {
         width: 16px;
         height: 16px;
         cursor: pointer;
     }
-    
+
     .radio-option:hover {
         color: #fff;
     }
-    
+
     .polling-indicator {
         font-size: 14px;
         animation: spin 1s linear infinite;
         color: #2196f3;
     }
-    
+
     @keyframes spin {
-        from { transform: rotate(0deg); }
-        to { transform: rotate(360deg); }
+        from {
+            transform: rotate(0deg);
+        }
+        to {
+            transform: rotate(360deg);
+        }
     }
-    
+
     .score-display {
         display: flex;
         align-items: center;
         gap: 20px;
     }
-    
-    
+
     .team-score-display {
         font-size: 32px;
         font-weight: bold;
@@ -1636,7 +2015,7 @@
         min-width: 60px;
         text-align: center;
     }
-    
+
     .team-score-display.auto {
         color: #2196f3;
         border: 1px solid #2196f3;
@@ -1644,13 +2023,13 @@
         padding: 4px 8px;
         background: rgba(33, 150, 243, 0.1);
     }
-    
+
     .score-separator {
         font-size: 24px;
         color: #666;
         font-weight: bold;
     }
-    
+
     /* Time Controls */
     .time-controls {
         background: #1e1e1e;
@@ -1665,41 +2044,41 @@
         gap: 30px;
         transition: border-color 0.2s;
     }
-    
+
     .time-controls.auto-mode {
         border-color: #2196f3;
     }
-    
+
     .time-mode-selector {
         display: flex;
         align-items: center;
         gap: 15px;
     }
-    
+
     .time-label {
         font-size: 16px;
         font-weight: bold;
         color: #fff;
     }
-    
+
     .time-display {
         display: flex;
         align-items: center;
         gap: 30px;
     }
-    
+
     .time-field {
         display: flex;
         align-items: center;
         gap: 10px;
     }
-    
+
     .field-label {
         font-size: 14px;
         color: #aaa;
         min-width: 50px;
     }
-    
+
     .time-input {
         width: 80px;
         height: 40px;
@@ -1714,33 +2093,33 @@
         box-sizing: border-box;
         transition: all 0.2s;
     }
-    
+
     .time-input:focus {
         outline: none;
         border-color: #2196f3;
         background: #333;
     }
-    
+
     .time-input:disabled {
         background: #1a1a1a;
         border-color: #333;
         color: #666;
         cursor: not-allowed;
     }
-    
+
     .time-input.auto {
         background: rgba(33, 150, 243, 0.1);
         border-color: #2196f3;
         color: #2196f3;
     }
-    
+
     .time-input.disabled {
         background: #1a1a1a;
         border-color: #333;
         color: #666;
         cursor: not-allowed;
     }
-    
+
     /* Timer Button */
     .timer-button {
         width: 50px;
@@ -1756,18 +2135,18 @@
         justify-content: center;
         transition: all 0.2s;
     }
-    
+
     .timer-button:hover {
         background: #333;
         border-color: #666;
     }
-    
+
     .timer-button.active {
         background: #2196f3;
         border-color: #2196f3;
         color: #fff;
     }
-    
+
     .timer-button.active:hover {
         background: #42a5f5;
         border-color: #42a5f5;
