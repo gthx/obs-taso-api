@@ -147,7 +147,8 @@
     .main-scoreboard {
         display: flex;
         align-items: center;
-        background: linear-gradient(135deg, #6a5acd 0%, #483d8b 100%);
+        /*background: linear-gradient(135deg, #6a5acd 0%, #483d8b 100%);*/
+        background: linear-gradient(135deg, #c8b432 0%, #eab92a 100%);
         height: 70px;
         top: 20px;
         padding: 0 20px;
@@ -212,7 +213,7 @@
     .time {
         font-variant-numeric: tabular-nums;
     }
-    
+
     .time.period-mode {
         opacity: 0.7;
     }
