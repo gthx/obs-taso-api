@@ -10,6 +10,36 @@
     let retryCount = $state(0);
     const maxRetries = 10;
 
+    // Internal clock state
+    let internalSeconds = $state(0);
+    let internalPeriod = $state(1);
+    let clockRunning = $state(false);
+    let clockInterval = null;
+    let lastTick = 0;
+    let accumulatedTime = 0;
+
+    // Match info state
+    let homeScore = $state(0);
+    let awayScore = $state(0);
+    let homeTeamName = $state("Home");
+    let awayTeamName = $state("Away");
+    let homeTeamLogo = $state("");
+    let awayTeamLogo = $state("");
+    let timeMode = $state("manual");
+
+    // Derived display time that handles different modes and periods
+    let displayTime = $derived.by(() => {
+        // Always use internal clock since we manage everything internally now
+        const minutes = Math.floor(internalSeconds / 60);
+        const seconds = internalSeconds % 60;
+        return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+    });
+
+    // Use internal period for display
+    let displayPeriod = $derived.by(() => {
+        return internalPeriod;
+    });
+
     // Get password from URL query parameter
     function getPasswordFromUrl() {
         const urlParams = new URLSearchParams(window.location.search);
@@ -28,16 +58,29 @@
             // Load initial match data
             await obsWebSocket.getMatchData();
 
-            // Listen for match updates
+            // Listen for control signals
             obsWebSocket.addEventListener("CustomEvent", (event) => {
-                if (
-                    event.eventData &&
-                    event.eventData.eventName === "MatchUpdate"
-                ) {
-                    console.log(
-                        "Received match update:",
-                        event.eventData.eventData,
-                    );
+                if (event.eventData) {
+                    const { eventName, eventData } = event.eventData;
+
+                    switch (eventName) {
+                        case "ClockControl":
+                            handleClockControl(eventData);
+                            break;
+                        case "ScoreUpdate":
+                            handleScoreUpdate(eventData);
+                            break;
+                        case "MatchInfo":
+                            handleMatchInfo(eventData);
+                            break;
+                        case "MatchUpdate":
+                            // Legacy support - can be removed later
+                            console.log(
+                                "Received legacy match update:",
+                                eventData,
+                            );
+                            break;
+                    }
                 }
             });
         } catch (error) {
@@ -50,45 +93,187 @@
         }
     }
 
+    function handleClockControl(data) {
+        const { action } = data;
+
+        switch (action) {
+            case "clock_start":
+                startInternalClock(data.time, data.period);
+                break;
+            case "clock_pause":
+                pauseInternalClock();
+                break;
+            case "clock_adjust":
+                adjustInternalClock(data.delta);
+                break;
+            case "clock_reset":
+                resetInternalClock(data.time, data.period);
+                break;
+            case "period_change":
+                handlePeriodChange(data.period);
+                break;
+        }
+    }
+
+    function handleScoreUpdate(data) {
+        homeScore = data.homeScore;
+        awayScore = data.awayScore;
+    }
+
+    function handleMatchInfo(data) {
+        if (data.homeTeamName) homeTeamName = data.homeTeamName;
+        if (data.awayTeamName) awayTeamName = data.awayTeamName;
+        if (data.homeTeamLogo) homeTeamLogo = data.homeTeamLogo;
+        if (data.awayTeamLogo) awayTeamLogo = data.awayTeamLogo;
+        if (data.timeMode) timeMode = data.timeMode;
+    }
+
+    function handlePeriodChange(newPeriod) {
+        if (newPeriod != internalPeriod) {
+            internalPeriod = newPeriod;
+            internalSeconds = 0;
+        }
+    }
+
+    function startInternalClock(time, period) {
+        // Only update time/period if explicitly provided (not on resume)
+        if (time !== undefined) {
+            // Convert time string to seconds
+            const [minutes, seconds] = time.split(":").map(Number);
+            internalSeconds = minutes * 60 + seconds;
+        }
+        if (period !== undefined) {
+            internalPeriod = period;
+        }
+
+        if (clockInterval) return; // Already running
+
+        clockRunning = true;
+        lastTick = Date.now();
+        accumulatedTime = 0;
+
+        // Use 60fps (16.67ms) for smooth accumulation
+        clockInterval = setInterval(handleClockTick, 16);
+    }
+
+    function handleClockTick() {
+        if (!clockRunning) return;
+
+        // Don't increment time during shootout (period 5)
+        if (internalPeriod === 5) return;
+
+        const now = Date.now();
+        const diff = now - lastTick;
+        lastTick = now;
+        accumulatedTime += diff;
+
+        // Update internal seconds when 1000ms have accumulated
+        if (accumulatedTime >= 1000) {
+            accumulatedTime -= 1000; // Keep remainder for next second
+            internalSeconds++;
+
+            // Different max times based on period
+            let maxSeconds;
+            if (internalPeriod === 4) {
+                maxSeconds = 300; // 5:00 for extra time (JA)
+            } else {
+                maxSeconds = 1200; // 20:00 for regular periods (1-3)
+            }
+
+            // Stop at max time for current period
+            if (internalSeconds >= maxSeconds) {
+                internalSeconds = maxSeconds;
+            }
+        }
+    }
+
+    function pauseInternalClock() {
+        clockRunning = false;
+        if (clockInterval) {
+            clearInterval(clockInterval);
+            clockInterval = null;
+        }
+        accumulatedTime = 0;
+    }
+
+    function adjustInternalClock(delta) {
+        internalSeconds += delta;
+
+        // Don't go below 0:00
+        if (internalSeconds < 0) {
+            internalSeconds = 0;
+        }
+
+        // Different max times based on period
+        let maxSeconds;
+        if (internalPeriod === 4) {
+            maxSeconds = 300; // 5:00 for extra time (JA)
+        } else if (internalPeriod === 5) {
+            maxSeconds = 0; // No time counting for shootout
+        } else {
+            maxSeconds = 1200; // 20:00 for regular periods (1-3)
+        }
+
+        if (internalSeconds > maxSeconds) {
+            internalSeconds = maxSeconds;
+        }
+    }
+
+    function resetInternalClock(time, period) {
+        if (time) {
+            // Convert time string to seconds
+            const [minutes, seconds] = time.split(":").map(Number);
+            internalSeconds = minutes * 60 + seconds;
+        }
+        if (period) internalPeriod = period;
+
+        // If clock was running, restart it with new time
+        if (clockRunning && clockInterval) {
+            pauseInternalClock();
+            startInternalClock(time, internalPeriod);
+        }
+    }
+
     onMount(() => {
         connectToOBS();
 
         return () => {
             obsWebSocket.disconnect();
+            pauseInternalClock();
         };
     });
 </script>
 
 <div class="scoreboard">
-    {#if $connectionStatus === "connected" && $matchData}
+    {#if $connectionStatus === "connected"}
         <!-- Home team logo on transparent background -->
 
         <!-- Main scoreboard container -->
         <div class="main-scoreboard">
             <div class="team-section home">
-                {#if $matchData.homeTeam?.logo}
+                {#if homeTeamLogo}
                     <img
                         class="logo home-logo"
-                        src={$matchData.homeTeam.logo}
-                        alt="{$matchData.homeTeam?.name} Logo"
+                        src={homeTeamLogo}
+                        alt="{homeTeamName} Logo"
                     />
                 {/if}
-                <!-- <div class="team-name">{$matchData.homeTeam?.name}</div> -->
-                <div class="team-score">{$matchData.homeTeam?.score || 0}</div>
+                <!-- <div class="team-name">{homeTeamName}</div> -->
+                <div class="team-score">{homeScore}</div>
             </div>
 
             <div class="divider">-</div>
 
             <div class="team-section away">
-                {#if $matchData.awayTeam?.logo}
+                {#if awayTeamLogo}
                     <img
                         class="logo away-logo"
-                        src={$matchData.awayTeam.logo}
-                        alt="{$matchData.awayTeam?.name} Logo"
+                        src={awayTeamLogo}
+                        alt="{awayTeamName} Logo"
                     />
                 {/if}
-                <!-- <div class="team-name">{$matchData.awayTeam?.name}</div> -->
-                <div class="team-score">{$matchData.awayTeam?.score || 0}</div>
+                <!-- <div class="team-name">{awayTeamName}</div> -->
+                <div class="team-score">{awayScore}</div>
             </div>
         </div>
 
@@ -96,17 +281,17 @@
 
         <!-- Period and time hanging below -->
         <div class="game-info">
-            {#if $matchData.period === 4}
+            {#if displayPeriod === 4}
                 <span class="period">JA</span>
-                <span class="time">{$matchData.time}</span>
-            {:else if $matchData.period === 5}
+                <span class="time">{displayTime}</span>
+            {:else if displayPeriod === 5}
                 <span class="period">RL</span>
             {:else}
-                <span class="period">{$matchData.period || 1}.</span>
-                {#if !$matchData.time}
+                <span class="period">{displayPeriod}.</span>
+                {#if timeMode === "period"}
                     <span class="time period-mode">--:--</span>
                 {:else}
-                    <span class="time">{$matchData.time}</span>
+                    <span class="time">{displayTime}</span>
                 {/if}
             {/if}
         </div>

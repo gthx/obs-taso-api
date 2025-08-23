@@ -43,6 +43,10 @@
     // Match type selection
     let matchType = $state("remote"); // "remote" or "local"
     
+    // Key repeat protection
+    let lastKeyPress = 0;
+    const keyDebounceDelay = 150; // 150ms between key presses
+    
     // Local match creation state
     let localMatchData = $state({
         homeTeamId: "",
@@ -82,7 +86,13 @@
         if (period !== previousPeriod && timeMode === "manual") {
             // Reset time to 00:00 when period changes
             time = "00:00";
-            updateMatchData();
+            
+            // Send period change signal
+            if ($connectionStatus === "connected") {
+                obsWebSocket.sendClockControl('period_change', { 
+                    period
+                });
+            }
         }
         previousPeriod = period;
     });
@@ -196,22 +206,21 @@
 
     // Global timer functions
     function startGlobalTimer() {
-        if (globalTimerInterval) return;
-
         globalTimerActive = true;
-        lastTick = Date.now();
-        accumulatedTime = 0;
-
-        globalTimerInterval = setInterval(handleGlobalTimerTick, 100); // 100ms tick rate
+        
+        // Send clock start signal to Overlay (no time override - just resume)
+        if ($connectionStatus === "connected" && timeMode === "manual") {
+            obsWebSocket.sendClockControl('clock_start');
+        }
     }
 
     function stopGlobalTimer() {
         globalTimerActive = false;
-        if (globalTimerInterval) {
-            clearInterval(globalTimerInterval);
-            globalTimerInterval = null;
+        
+        // Send clock pause signal to Overlay
+        if ($connectionStatus === "connected" && timeMode === "manual") {
+            obsWebSocket.sendClockControl('clock_pause');
         }
-        accumulatedTime = 0;
     }
 
     function toggleGlobalTimer() {
@@ -222,27 +231,6 @@
         }
     }
 
-    function handleGlobalTimerTick() {
-        const now = Date.now();
-        const diff = now - lastTick;
-        lastTick = now;
-        accumulatedTime += diff; // Add 100ms
-
-        // Run 1-second logic when 1000ms have accumulated
-        if (accumulatedTime >= 1000) {
-            accumulatedTime = 0; // Reset accumulator
-
-            // Update time based on mode
-            if (timeMode === "manual") {
-                incrementTime();
-            }
-
-            // Always fetch scores when timer is active (for all modes)
-            if (matchId && torneopalApiKey) {
-                fetchCurrentScore();
-            }
-        }
-    }
 
     function incrementTime() {
 
@@ -264,19 +252,16 @@
         // Stop at max time for current period
         if (totalSeconds >= maxSeconds) {
             totalSeconds = maxSeconds;
-            const maxMinutes = Math.floor(maxSeconds / 60);
-            const maxSecondsRemainder = maxSeconds % 60;
-            time = `${maxMinutes.toString().padStart(2, "0")}:${maxSecondsRemainder.toString().padStart(2, "0")}`;
-            // Stop the timer when reaching max time
-            stopGlobalTimer();
-        } else {
-            const newMinutes = Math.floor(totalSeconds / 60);
-            const newSeconds = totalSeconds % 60;
-            time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
         }
 
-        // Update overlay
-        updateMatchData();
+        const newMinutes = Math.floor(totalSeconds / 60);
+        const newSeconds = totalSeconds % 60;
+        time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
+
+        // Send increment signal to Overlay
+        if ($connectionStatus === "connected" && timeMode === "manual") {
+            obsWebSocket.sendClockControl('clock_adjust', { delta: 1 });
+        }
     }
 
     function decrementTime() {
@@ -294,8 +279,10 @@
         const newSeconds = totalSeconds % 60;
         time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
 
-        // Update overlay
-        updateMatchData();
+        // Send decrement signal to Overlay
+        if ($connectionStatus === "connected" && timeMode === "manual") {
+            obsWebSocket.sendClockControl('clock_adjust', { delta: -1 });
+        }
     }
 
     function adjustTimeBySeconds(delta) {
@@ -358,10 +345,17 @@
         const formattedTime = `${minutes}:${seconds}`;
         time = formattedTime;
         
-        // Clear the override input and update overlay
+        // Send clock reset signal with new time
+        if ($connectionStatus === "connected" && timeMode === "manual") {
+            obsWebSocket.sendClockControl('clock_reset', { 
+                time: formattedTime,
+                period
+            });
+        }
+        
+        // Clear the override input
         overrideTime = "";
         isTimeOverrideActive = false;
-        updateMatchData();
     }
 
     function copyOverlayUrl() {
@@ -382,24 +376,47 @@
     }
 
     async function updateMatchData() {
-        const data = {
-            homeTeam: {
-                name: homeTeamName,
-                score: homeTeamScore,
-                logo: matchInfo?.homeTeamLogo || "",
-            },
-            awayTeam: {
-                name: awayTeamName,
-                score: awayTeamScore,
-                logo: matchInfo?.awayTeamLogo || "",
-            },
-            period,
-            time: timeMode === "period" ? "" : time, // Empty time in period mode
-            timeMode,
-            lastUpdated: new Date().toISOString(),
-        };
-
-        await obsWebSocket.setMatchData(data);
+        // Send separate signals for different data types
+        if ($connectionStatus === "connected") {
+            // Send score update
+            await obsWebSocket.sendScoreUpdate(homeTeamScore, awayTeamScore);
+            
+            // Send match info if available
+            if (matchInfo) {
+                await obsWebSocket.sendMatchInfo({
+                    homeTeamName,
+                    awayTeamName,
+                    homeTeamLogo: matchInfo.homeTeamLogo || "",
+                    awayTeamLogo: matchInfo.awayTeamLogo || "",
+                    timeMode
+                });
+            }
+        }
+    }
+    
+    // Force refresh all match info to Overlay
+    async function forceRefreshMatchInfo() {
+        if ($connectionStatus === "connected") {
+            // Send all current data to Overlay
+            await obsWebSocket.sendScoreUpdate(homeTeamScore, awayTeamScore);
+            
+            // Send match info
+            await obsWebSocket.sendMatchInfo({
+                homeTeamName,
+                awayTeamName,
+                homeTeamLogo: matchInfo?.homeTeamLogo || "",
+                awayTeamLogo: matchInfo?.awayTeamLogo || "",
+                timeMode
+            });
+            
+            // If in manual mode, also send current time/period
+            if (timeMode === "manual") {
+                await obsWebSocket.sendClockControl('clock_reset', {
+                    time,
+                    period
+                });
+            }
+        }
     }
 
     // Load saved connection settings from localStorage
@@ -677,16 +694,23 @@
             toggleGlobalTimer();
         }
 
-        // Arrow keys - adjust time in manual mode
+        // Arrow keys - adjust time in manual mode (with key repeat protection)
         if (
             timeMode === "manual" &&
             $connectionStatus === "connected"
         ) {
+            const now = Date.now();
+            if (now - lastKeyPress < keyDebounceDelay) {
+                return; // Ignore rapid key presses
+            }
+            
             if (event.code === "ArrowUp") {
                 event.preventDefault();
+                lastKeyPress = now;
                 incrementTime();
             } else if (event.code === "ArrowDown") {
                 event.preventDefault();
+                lastKeyPress = now;
                 decrementTime();
             }
         }
@@ -762,6 +786,13 @@
                             >🕐 {matchInfo.time.substring(0, 5)}</span
                         >
                         <span class="match-venue">📍 {matchInfo.venue}</span>
+                        <button
+                            class="refresh-match-btn"
+                            onclick={forceRefreshMatchInfo}
+                            title="Refresh Match Info on Overlay"
+                        >
+                            🔄
+                        </button>
                         <button
                             class="change-match-btn"
                             onclick={() => (showMatchPopup = true)}
@@ -1412,6 +1443,7 @@
         white-space: nowrap;
     }
 
+    .refresh-match-btn,
     .change-match-btn {
         background: transparent;
         border: 1px solid #444;
@@ -1423,9 +1455,24 @@
         margin-left: 12px;
     }
 
+    .refresh-match-btn:hover {
+        background: #2a2a2a;
+        border-color: #4caf50;
+        animation: rotate 0.5s ease-in-out;
+    }
+
     .change-match-btn:hover {
         background: #2a2a2a;
         border-color: #2196f3;
+    }
+    
+    @keyframes rotate {
+        from {
+            transform: rotate(0deg);
+        }
+        to {
+            transform: rotate(360deg);
+        }
     }
 
     /* Popup Styles */

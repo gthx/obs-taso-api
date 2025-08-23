@@ -10,7 +10,9 @@
         autoMode = false
     } = $props();
 
-    function increment() {
+    let inputElement;
+
+    function increment(event) {
         if (disabled) return;
         if (max !== undefined && value >= max) return; // Don't increment if already at max
         const newValue = value + step;
@@ -18,9 +20,12 @@
             value = newValue;
             onchange();
         }
+        // Blur both the input and the button after incrementing
+        if (inputElement) inputElement.blur();
+        if (event && event.target) event.target.blur();
     }
 
-    function decrement() {
+    function decrement(event) {
         if (disabled) return;
         if (value <= min) return; // Don't decrement if already at min
         const newValue = value - step;
@@ -28,6 +33,9 @@
             value = newValue;
             onchange();
         }
+        // Blur both the input and the button after decrementing
+        if (inputElement) inputElement.blur();
+        if (event && event.target) event.target.blur();
     }
 
     function handleInputChange() {
@@ -36,6 +44,8 @@
         if (value < min) value = min;
         if (max !== undefined && value > max) value = max;
         onchange();
+        // Blur the input after change
+        if (inputElement) inputElement.blur();
     }
 </script>
 
@@ -51,7 +61,14 @@
         class="numeric-input"
         class:auto={autoMode}
         bind:value={value}
+        bind:this={inputElement}
         onchange={handleInputChange}
+        onkeydown={(e) => {
+            if (e.key === 'Enter') {
+                handleInputChange();
+                e.target.blur();
+            }
+        }}
         disabled={disabled}
         min={min}
         max={max}
