@@ -294,7 +294,6 @@
             // Send score update
             await obsWebSocket.sendScoreUpdate(homeTeamScore, awayTeamScore);
 
-            const periodLength = periodLengths[period];
             // Send match info if available
             if (matchInfo) {
                 await obsWebSocket.sendMatchInfo({
@@ -447,6 +446,7 @@
             homeTeamScore = 0;
             awayTeamScore = 0;
             period = 1;
+            periodLengths = cachedData.periodLengths;
             time = "00:00";
 
             // Update overlay
@@ -475,6 +475,7 @@
                     time: match.time,
                     venue: match.venue_name || "Venue",
                     category: match.category_name || "",
+                    periodLengths,
                 };
 
                 // Store the fresh data
