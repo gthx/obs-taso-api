@@ -13,6 +13,7 @@
     // Internal clock state
     let internalSeconds = $state(0);
     let internalPeriod = $state(1);
+    let internalPeriodLength = 1200;
     let clockRunning = $state(false);
     let clockInterval = null;
     let lastTick = 0;
@@ -98,7 +99,7 @@
 
         switch (action) {
             case "clock_start":
-                startInternalClock(data.time, data.period);
+                startInternalClock(data.time);
                 break;
             case "clock_pause":
                 pauseInternalClock();
@@ -107,10 +108,10 @@
                 adjustInternalClock(data.delta);
                 break;
             case "clock_reset":
-                resetInternalClock(data.time, data.period);
+                resetInternalClock(data.time);
                 break;
             case "period_change":
-                handlePeriodChange(data.period);
+                handlePeriodChange(data.period, data.periodLength);
                 break;
         }
     }
@@ -128,22 +129,20 @@
         if (data.timeMode) timeMode = data.timeMode;
     }
 
-    function handlePeriodChange(newPeriod) {
+    function handlePeriodChange(newPeriod, periodLength) {
         if (newPeriod != internalPeriod) {
             internalPeriod = newPeriod;
             internalSeconds = 0;
+            internalPeriodLength = periodLength;
         }
     }
 
-    function startInternalClock(time, period) {
+    function startInternalClock(time) {
         // Only update time/period if explicitly provided (not on resume)
-        if (time !== undefined) {
+        if (time) {
             // Convert time string to seconds
             const [minutes, seconds] = time.split(":").map(Number);
             internalSeconds = minutes * 60 + seconds;
-        }
-        if (period !== undefined) {
-            internalPeriod = period;
         }
 
         if (clockInterval) return; // Already running
@@ -173,12 +172,7 @@
             internalSeconds++;
 
             // Different max times based on period
-            let maxSeconds;
-            if (internalPeriod === 4) {
-                maxSeconds = 300; // 5:00 for extra time (JA)
-            } else {
-                maxSeconds = 1200; // 20:00 for regular periods (1-3)
-            }
+            const maxSeconds = internalPeriodLength;
 
             // Stop at max time for current period
             if (internalSeconds >= maxSeconds) {
@@ -197,6 +191,7 @@
     }
 
     function adjustInternalClock(delta) {
+        accumulatedTime = 0;
         internalSeconds += delta;
 
         // Don't go below 0:00
@@ -219,18 +214,17 @@
         }
     }
 
-    function resetInternalClock(time, period) {
+    function resetInternalClock(time) {
         if (time) {
             // Convert time string to seconds
             const [minutes, seconds] = time.split(":").map(Number);
             internalSeconds = minutes * 60 + seconds;
         }
-        if (period) internalPeriod = period;
 
         // If clock was running, restart it with new time
         if (clockRunning && clockInterval) {
             pauseInternalClock();
-            startInternalClock(time, internalPeriod);
+            startInternalClock(time);
         }
     }
 

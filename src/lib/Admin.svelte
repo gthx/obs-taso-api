@@ -11,7 +11,6 @@
     let wsUrl = $state("ws://localhost:4455");
     let wsPassword = $state("");
     let isConnecting = $state(false);
-    let connectionBoxExpanded = $state(false);
     let obsPreviewExpanded = $state(true);
     let showMatchPopup = $state(false);
 
@@ -26,9 +25,6 @@
 
     // Global timer state
     let globalTimerActive = $state(false);
-    let globalTimerInterval = null;
-    let lastTick = 0;
-    let accumulatedTime = 0;
 
     // Time override functionality
     let overrideTime = $state("");
@@ -39,14 +35,15 @@
     let matchId = $state("");
     let torneopalEnabled = $derived(torneopalApiKey && matchId);
     let matchInfo = $state(null);
+    let periodLengths = [0, 1200, 1200, 1200, 300, 0, 0]; // Store period_sec array from API
 
     // Match type selection
     let matchType = $state("remote"); // "remote" or "local"
-    
+
     // Key repeat protection
     let lastKeyPress = 0;
     const keyDebounceDelay = 150; // 150ms between key presses
-    
+
     // Local match creation state
     let localMatchData = $state({
         homeTeamId: "",
@@ -67,30 +64,37 @@
     let time = $state("00:00");
 
     // Track previous period to detect changes
-    let previousPeriod = $state(period);
+    let previousPeriod = $state(1);
 
     // Subscribe to match data changes using $effect
     $effect(() => {
         if ($matchData) {
-            homeTeamName = $matchData.homeTeam?.name || "";
-            homeTeamScore = $matchData.homeTeam?.score || 0;
-            awayTeamName = $matchData.awayTeam?.name || "";
-            awayTeamScore = $matchData.awayTeam?.score || 0;
-            period = $matchData.period || 1;
-            time = $matchData.time || "00:00";
+            if ($matchData.homeTeam?.name)
+                homeTeamName = $matchData.homeTeam?.name;
+            if ($matchData.homeTeam?.score)
+                homeTeamScore = $matchData.homeTeam?.score;
+            if ($matchData.awayTeam?.name)
+                awayTeamName = $matchData.awayTeam?.name;
+            if ($matchData.awayTeam?.score)
+                awayTeamScore = $matchData.awayTeam?.score;
+            if ($matchData.awayTeam?.score)
+                awayTeamScore = $matchData.awayTeam?.score;
+            if ($matchData.period) period = $matchData.period;
+            if ($matchData.time) time = $matchData.time;
         }
     });
 
     // Watch for period changes to reset time
     $effect(() => {
-        if (period !== previousPeriod && timeMode === "manual") {
+        if (period !== previousPeriod) {
             // Reset time to 00:00 when period changes
             time = "00:00";
-            
+            stopGlobalTimer();
             // Send period change signal
             if ($connectionStatus === "connected") {
-                obsWebSocket.sendClockControl('period_change', { 
-                    period
+                obsWebSocket.sendClockControl("period_change", {
+                    period,
+                    periodLength: periodLengths[period],
                 });
             }
         }
@@ -207,19 +211,19 @@
     // Global timer functions
     function startGlobalTimer() {
         globalTimerActive = true;
-        
+
         // Send clock start signal to Overlay (no time override - just resume)
         if ($connectionStatus === "connected" && timeMode === "manual") {
-            obsWebSocket.sendClockControl('clock_start');
+            obsWebSocket.sendClockControl("clock_start");
         }
     }
 
     function stopGlobalTimer() {
         globalTimerActive = false;
-        
+
         // Send clock pause signal to Overlay
         if ($connectionStatus === "connected" && timeMode === "manual") {
-            obsWebSocket.sendClockControl('clock_pause');
+            obsWebSocket.sendClockControl("clock_pause");
         }
     }
 
@@ -231,72 +235,9 @@
         }
     }
 
-
-    function incrementTime() {
-
-        // Don't increment time during shootout (period 5)
-        if (period === 5) return;
-
-        // Parse current time and increment by 1 second
-        const [minutes, seconds] = time.split(":").map(Number);
-        let totalSeconds = minutes * 60 + seconds + 1;
-
-        // Different max times based on period
-        let maxSeconds;
-        if (period === 4) {
-            maxSeconds = 300; // 5:00 for extra time (JA)
-        } else {
-            maxSeconds = 1200; // 20:00 for regular periods (1-3)
-        }
-
-        // Stop at max time for current period
-        if (totalSeconds >= maxSeconds) {
-            totalSeconds = maxSeconds;
-        }
-
-        const newMinutes = Math.floor(totalSeconds / 60);
-        const newSeconds = totalSeconds % 60;
-        time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
-
-        // Send increment signal to Overlay
-        if ($connectionStatus === "connected" && timeMode === "manual") {
-            obsWebSocket.sendClockControl('clock_adjust', { delta: 1 });
-        }
-    }
-
-    function decrementTime() {
-
-        // Parse current time and decrement by 1 second
-        const [minutes, seconds] = time.split(":").map(Number);
-        let totalSeconds = minutes * 60 + seconds - 1;
-
-        // Don't go below 0:00
-        if (totalSeconds < 0) {
-            totalSeconds = 0;
-        }
-
-        const newMinutes = Math.floor(totalSeconds / 60);
-        const newSeconds = totalSeconds % 60;
-        time = `${newMinutes.toString().padStart(2, "0")}:${newSeconds.toString().padStart(2, "0")}`;
-
-        // Send decrement signal to Overlay
-        if ($connectionStatus === "connected" && timeMode === "manual") {
-            obsWebSocket.sendClockControl('clock_adjust', { delta: -1 });
-        }
-    }
-
-    function adjustTimeBySeconds(delta) {
-
-        if (delta > 0) {
-            incrementTime();
-        } else if (delta < 0) {
-            decrementTime();
-        }
-    }
-
     function applyTimeOverride() {
         if (!overrideTime) return;
-        
+
         let value = overrideTime.replace(/\D/g, "");
 
         // Pad with leading zeros if less than 4 digits
@@ -314,45 +255,17 @@
             seconds = "59";
         }
 
-        // Validate time range based on period
-        const totalTime = minutes + seconds;
-        const numValue = parseInt(totalTime);
-        
-        // Different max times based on period
-        let maxTime;
-        if (period === 4) {
-            maxTime = 500; // 05:00 for extra time
-        } else if (period === 5) {
-            maxTime = 0; // No time counting for shootout
-        } else {
-            maxTime = 2000; // 20:00 for regular periods
-        }
-        
-        if (numValue > maxTime) {
-            if (period === 4) {
-                minutes = "05";
-                seconds = "00";
-            } else if (period === 5) {
-                minutes = "00";
-                seconds = "00";
-            } else {
-                minutes = "20";
-                seconds = "00";
-            }
-        }
-
         // Format as MM:SS and override the current game time
         const formattedTime = `${minutes}:${seconds}`;
         time = formattedTime;
-        
+
         // Send clock reset signal with new time
         if ($connectionStatus === "connected" && timeMode === "manual") {
-            obsWebSocket.sendClockControl('clock_reset', { 
+            obsWebSocket.sendClockControl("clock_reset", {
                 time: formattedTime,
-                period
             });
         }
-        
+
         // Clear the override input
         overrideTime = "";
         isTimeOverrideActive = false;
@@ -380,7 +293,8 @@
         if ($connectionStatus === "connected") {
             // Send score update
             await obsWebSocket.sendScoreUpdate(homeTeamScore, awayTeamScore);
-            
+
+            const periodLength = periodLengths[period];
             // Send match info if available
             if (matchInfo) {
                 await obsWebSocket.sendMatchInfo({
@@ -388,32 +302,36 @@
                     awayTeamName,
                     homeTeamLogo: matchInfo.homeTeamLogo || "",
                     awayTeamLogo: matchInfo.awayTeamLogo || "",
-                    timeMode
+                    timeMode,
                 });
             }
         }
     }
-    
+
     // Force refresh all match info to Overlay
     async function forceRefreshMatchInfo() {
         if ($connectionStatus === "connected") {
             // Send all current data to Overlay
             await obsWebSocket.sendScoreUpdate(homeTeamScore, awayTeamScore);
-            
+
             // Send match info
             await obsWebSocket.sendMatchInfo({
                 homeTeamName,
                 awayTeamName,
                 homeTeamLogo: matchInfo?.homeTeamLogo || "",
                 awayTeamLogo: matchInfo?.awayTeamLogo || "",
-                timeMode
+                timeMode,
             });
-            
+
+            await obsWebSocket.sendClockControl("period_change", {
+                period,
+                periodLength: periodLengths[period],
+            });
+
             // If in manual mode, also send current time/period
             if (timeMode === "manual") {
-                await obsWebSocket.sendClockControl('clock_reset', {
+                await obsWebSocket.sendClockControl("clock_reset", {
                     time,
-                    period
                 });
             }
         }
@@ -529,7 +447,7 @@
             homeTeamScore = 0;
             awayTeamScore = 0;
             period = 1;
-            time = "20:00";
+            time = "00:00";
 
             // Update overlay
             await updateMatchData();
@@ -541,6 +459,11 @@
 
             if (result && result.match) {
                 const match = result.match;
+
+                // Store period lengths if available
+                if (match.period_sec) {
+                    periodLengths = match.period_sec;
+                }
 
                 // Create match info object
                 const newMatchInfo = {
@@ -567,7 +490,7 @@
                     homeTeamScore = 0;
                     awayTeamScore = 0;
                     period = 1;
-                    time = "20:00";
+                    time = "00:00";
                 }
 
                 // Update overlay with fresh data
@@ -695,23 +618,20 @@
         }
 
         // Arrow keys - adjust time in manual mode (with key repeat protection)
-        if (
-            timeMode === "manual" &&
-            $connectionStatus === "connected"
-        ) {
+        if (timeMode === "manual" && $connectionStatus === "connected") {
             const now = Date.now();
             if (now - lastKeyPress < keyDebounceDelay) {
                 return; // Ignore rapid key presses
             }
-            
+
             if (event.code === "ArrowUp") {
                 event.preventDefault();
                 lastKeyPress = now;
-                incrementTime();
+                obsWebSocket.sendClockControl("clock_adjust", { delta: 1 });
             } else if (event.code === "ArrowDown") {
                 event.preventDefault();
                 lastKeyPress = now;
-                decrementTime();
+                obsWebSocket.sendClockControl("clock_adjust", { delta: -1 });
             }
         }
     }
@@ -865,7 +785,7 @@
                             onchange={saveTorneopalSettings}
                         />
                     </div>
-                    
+
                     {#if matchType === "remote"}
                         <!-- Remote Match Fields -->
                         <div class="popup-field">
@@ -878,7 +798,7 @@
                                 onchange={saveTorneopalSettings}
                             />
                         </div>
-                        
+
                         <div class="popup-actions">
                             <button
                                 class="popup-load-btn"
@@ -910,7 +830,7 @@
                                 bind:value={localMatchData.homeTeamId}
                             />
                         </div>
-                        
+
                         <div class="popup-field">
                             <label for="away-team-name">Away Team Name:</label>
                             <input
@@ -920,9 +840,11 @@
                                 bind:value={localMatchData.awayTeamName}
                             />
                         </div>
-                        
+
                         <div class="popup-field">
-                            <label for="away-team-logo">Away Team Logo URL (optional):</label>
+                            <label for="away-team-logo"
+                                >Away Team Logo URL (optional):</label
+                            >
                             <input
                                 id="away-team-logo"
                                 type="text"
@@ -930,7 +852,7 @@
                                 bind:value={localMatchData.awayTeamLogo}
                             />
                         </div>
-                        
+
                         <div class="popup-field">
                             <label for="match-date">Match Date:</label>
                             <input
@@ -939,7 +861,7 @@
                                 bind:value={localMatchData.date}
                             />
                         </div>
-                        
+
                         <div class="popup-field">
                             <label for="match-time">Match Time:</label>
                             <input
@@ -948,7 +870,7 @@
                                 bind:value={localMatchData.time}
                             />
                         </div>
-                        
+
                         <div class="popup-field">
                             <label for="venue">Venue:</label>
                             <input
@@ -958,7 +880,7 @@
                                 bind:value={localMatchData.venue}
                             />
                         </div>
-                        
+
                         <div class="popup-actions">
                             <button
                                 class="popup-create-btn"
@@ -1145,12 +1067,8 @@
                             overrideTime = value;
                         }}
                         onblur={() => {
-                            if (isTimeOverrideActive && overrideTime) {
-                                applyTimeOverride();
-                            } else {
-                                overrideTime = "";
-                                isTimeOverrideActive = false;
-                            }
+                            overrideTime = "";
+                            isTimeOverrideActive = false;
                         }}
                         onkeydown={(e) => {
                             if (e.key === "Enter") {
@@ -1465,7 +1383,7 @@
         background: #2a2a2a;
         border-color: #2196f3;
     }
-    
+
     @keyframes rotate {
         from {
             transform: rotate(0deg);
@@ -1644,7 +1562,7 @@
         color: #fff;
         border-color: #666;
     }
-    
+
     .match-type-selector {
         display: flex;
         gap: 20px;
