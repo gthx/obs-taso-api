@@ -309,8 +309,8 @@
     .scoreboard {
         --scale: 1.2; /* Adjust this value to scale the entire scoreboard */
         position: fixed;
-        top: 20px;
-        left: 40px;
+        top: 40px;
+        left: 60px;
         display: flex;
         align-items: center;
         gap: calc(15px * var(--scale));
