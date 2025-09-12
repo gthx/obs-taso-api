@@ -242,6 +242,17 @@
     {#if $connectionStatus === "connected"}
         <!-- Home team logo on transparent background -->
 
+        <!-- Period indicator next to home logo -->
+        <div class="period-indicator">
+            {#if displayPeriod === 4}
+                <span class="period">JA</span>
+            {:else if displayPeriod === 5}
+                <span class="period">RL</span>
+            {:else}
+                <span class="period">{displayPeriod}.</span>
+            {/if}
+        </div>
+
         <!-- Main scoreboard container -->
         <div class="main-scoreboard">
             <div class="team-section home">
@@ -251,12 +262,29 @@
                         src={homeTeamLogo}
                         alt="{homeTeamName} Logo"
                     />
+                {:else}
+                    <div class="team-name">{homeTeamName}</div>
                 {/if}
-                <!-- <div class="team-name">{homeTeamName}</div> -->
-                <div class="team-score">{homeScore}</div>
             </div>
 
-            <div class="divider">-</div>
+            <div class="score">
+                <div class="team-score">{homeScore}</div>
+                <div class="divider">-</div>
+                <div class="team-score">{awayScore}</div>
+
+                <!-- Time hanging below score -->
+                <div class="game-info">
+                    {#if displayPeriod === 4}
+                        <span class="time">{displayTime}</span>
+                    {:else if displayPeriod === 5}
+                        <!-- No time display for shootout -->
+                    {:else if timeMode === "period"}
+                        <span class="time period-mode">--:--</span>
+                    {:else}
+                        <span class="time">{displayTime}</span>
+                    {/if}
+                </div>
+            </div>
 
             <div class="team-section away">
                 {#if awayTeamLogo}
@@ -265,29 +293,10 @@
                         src={awayTeamLogo}
                         alt="{awayTeamName} Logo"
                     />
-                {/if}
-                <!-- <div class="team-name">{awayTeamName}</div> -->
-                <div class="team-score">{awayScore}</div>
-            </div>
-        </div>
-
-        <!-- Away team logo on transparent background -->
-
-        <!-- Period and time hanging below -->
-        <div class="game-info">
-            {#if displayPeriod === 4}
-                <span class="period">JA</span>
-                <span class="time">{displayTime}</span>
-            {:else if displayPeriod === 5}
-                <span class="period">RL</span>
-            {:else}
-                <span class="period">{displayPeriod}.</span>
-                {#if timeMode === "period"}
-                    <span class="time period-mode">--:--</span>
                 {:else}
-                    <span class="time">{displayTime}</span>
+                    <div class="team-name">{awayTeamName}</div>
                 {/if}
-            {/if}
+            </div>
         </div>
     {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}
         <div class="connecting">
@@ -299,94 +308,89 @@
 <style>
     .scoreboard {
         position: fixed;
-        top: 24px;
-        left: 48px;
+        top: 30px;
+        left: 30px;
         display: flex;
-        align-items: flex-start;
-        gap: 0;
+        align-items: center;
+        gap: 15px;
         font-family: "Arial Black", Arial, sans-serif;
-        color: white;
-        text-shadow: 2px 2px 4px rgba(0, 0, 0, 0.8);
         user-select: none;
         cursor: none;
     }
 
-    .logo {
-        width: 90px;
-        height: 90px;
-        background: transparent;
-        z-index: 5;
-        filter: drop-shadow(8px 16px 2px rgba(72, 61, 139, 0.5));
+    .period-indicator {
+        background: #8b7fc7;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-weight: bold;
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
 
-    .away-logo {
-        margin-top: 12px;
+    .logo {
+        width: 60px;
+        height: 60px;
+        background: transparent;
+        z-index: 5;
+        filter: drop-shadow(4px 8px 2px rgba(72, 61, 139, 0.3));
     }
 
     .main-scoreboard {
         display: flex;
         align-items: center;
-        /*background: linear-gradient(135deg, #6a5acd 0%, #483d8b 100%);*/
-        background: linear-gradient(135deg, #c8b432 0%, #eab92a 100%);
-        height: 70px;
-        top: 20px;
-        padding: 0 20px;
-        border-radius: 8px;
-        position: relative;
+        gap: 12px;
+        background: transparent;
     }
 
     .team-section {
         display: flex;
         align-items: center;
-        gap: 15px;
-    }
-
-    .team-section.home {
-        flex-direction: row;
-    }
-
-    .team-section.away {
-        flex-direction: row-reverse;
+        gap: 10px;
     }
 
     .team-name {
-        font-size: 28px;
+        font-size: 20px;
         font-weight: bold;
-        min-width: 80px;
+        color: #333;
+    }
+
+    .score {
+        display: flex;
+        align-items: center;
+        background: #5b4b99;
+        padding: 6px 12px;
+        border-radius: 6px;
+        gap: 8px;
+        position: relative;
     }
 
     .team-score {
-        font-size: 48px;
+        font-size: 24px;
         font-weight: bold;
-        min-width: 60px;
+        color: white;
+        min-width: 30px;
         text-align: center;
     }
 
     .divider {
-        font-size: 36px;
+        font-size: 20px;
         font-weight: bold;
-        margin: 0 20px;
         color: white;
     }
 
     .game-info {
         position: absolute;
-        top: 90px;
+        top: 100%;
         left: 50%;
         transform: translateX(-50%);
-        background: rgba(127, 127, 127, 0.7);
-        padding: 0 8px 8px;
-        border-radius: 0 0 8px 8px;
-        font-size: 20px;
+        background: #f5f5f5;
+        color: #333;
+        padding: 2px 10px 6px;
+        border-radius: 0 0 6px 6px;
+        font-size: 16px;
         font-weight: bold;
+        min-width: 60px;
         text-align: center;
-        min-width: 120px;
-        backdrop-filter: blur(5px);
-    }
-
-    .period {
-        color: #ffd700;
-        margin-right: 8px;
     }
 
     .time {
@@ -403,8 +407,5 @@
         border-radius: 5px;
         font-size: 14px;
         color: #ccc;
-        position: fixed;
-        top: 20px;
-        left: 20px;
     }
 </style>
