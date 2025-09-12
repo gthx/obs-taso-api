@@ -307,15 +307,18 @@
 
 <style>
     .scoreboard {
+        --scale: 1.2; /* Adjust this value to scale the entire scoreboard */
         position: fixed;
-        top: 30px;
-        left: 30px;
+        top: 20px;
+        left: 40px;
         display: flex;
         align-items: center;
-        gap: 15px;
+        gap: calc(15px * var(--scale));
         font-family: "Arial Black", Arial, sans-serif;
         user-select: none;
         cursor: none;
+        transform: scale(var(--scale));
+        transform-origin: top left;
     }
 
     .period-indicator {
