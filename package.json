@@ -7,11 +7,14 @@
     "dev": "vite",
     "dev:ws": "bun dev-ws-server.js",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check": "svelte-check --tsconfig ./tsconfig.json"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^6.1.0",
     "svelte": "^5.37.2",
+    "svelte-check": "^4.3.1",
+    "typescript": "^5.9.2",
     "vite": "^7.0.6"
   }
 }
