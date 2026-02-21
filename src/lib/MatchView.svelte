@@ -568,121 +568,123 @@
     {#if matchInfo}
         <!-- Row 1: Main controls -->
         <div class="control-row row-main" class:active={globalTimerActive}>
-            <button
-                class="play-btn"
-                class:running={globalTimerActive}
-                onclick={toggleGlobalTimer}
-                title={globalTimerActive
-                    ? "Pause (Spacebar)"
-                    : "Play (Spacebar)"}
-            >
-                {globalTimerActive ? "⏸" : "▶"}
-            </button>
+            <div class="control-group">
+                <button
+                    class="play-btn"
+                    class:running={globalTimerActive}
+                    onclick={toggleGlobalTimer}
+                    title={globalTimerActive
+                        ? "Pause (Spacebar)"
+                        : "Play (Spacebar)"}
+                >
+                    {globalTimerActive ? "⏸" : "▶"}
+                </button>
 
-            <span class="timer-status">
-                {globalTimerActive ? "Running" : "Paused"}
-            </span>
+                <span class="timer-status">
+                    {globalTimerActive ? "Running" : "Paused"}
+                </span>
+            </div>
 
-            <span class="separator"></span>
+            <div class="control-group">
+                <span class="field-label">P</span>
+                <select
+                    class="period-select"
+                    value={period}
+                    onchange={handlePeriodChange}
+                    disabled={timeMode === "auto" ||
+                        $connectionStatus !== "connected"}
+                >
+                    <option value={1}>1</option>
+                    <option value={2}>2</option>
+                    <option value={3}>3</option>
+                    <option value={4}>JA</option>
+                    <option value={5}>RL</option>
+                </select>
 
-            <span class="field-label">P</span>
-            <select
-                class="period-select"
-                value={period}
-                onchange={handlePeriodChange}
-                disabled={timeMode === "auto" ||
-                    $connectionStatus !== "connected"}
-            >
-                <option value={1}>1</option>
-                <option value={2}>2</option>
-                <option value={3}>3</option>
-                <option value={4}>JA</option>
-                <option value={5}>RL</option>
-            </select>
-
-            <input
-                type="text"
-                class="time-input"
-                class:auto={timeMode === "auto"}
-                class:disabled={timeMode === "period"}
-                bind:value={overrideTime}
-                onclick={(e) => {
-                    if (
-                        timeMode !== "auto" &&
-                        timeMode !== "period" &&
-                        $connectionStatus === "connected"
-                    ) {
-                        e.target.select();
-                    }
-                }}
-                onfocus={(e) => {
-                    if (
-                        timeMode !== "auto" &&
-                        timeMode !== "period" &&
-                        $connectionStatus === "connected"
-                    ) {
-                        isTimeOverrideActive = true;
-                        if (!overrideTime) {
-                            overrideTime = time.replace(":", "");
+                <input
+                    type="text"
+                    class="time-input"
+                    class:auto={timeMode === "auto"}
+                    class:disabled={timeMode === "period"}
+                    bind:value={overrideTime}
+                    onclick={(e) => {
+                        if (
+                            timeMode !== "auto" &&
+                            timeMode !== "period" &&
+                            $connectionStatus === "connected"
+                        ) {
+                            e.target.select();
                         }
-                        setTimeout(() => e.target.select(), 0);
-                    }
-                }}
-                oninput={(e) => {
-                    let value = e.target.value.replace(/\D/g, "");
-                    if (value.length > 4) {
-                        value = value.substring(0, 4);
-                    }
-                    overrideTime = value;
-                }}
-                onblur={() => {
-                    overrideTime = "";
-                    isTimeOverrideActive = false;
-                }}
-                onkeydown={(e) => {
-                    if (e.key === "Enter") {
-                        if (overrideTime) {
-                            applyTimeOverride();
-                        } else {
-                            overrideTime = "";
-                            isTimeOverrideActive = false;
+                    }}
+                    onfocus={(e) => {
+                        if (
+                            timeMode !== "auto" &&
+                            timeMode !== "period" &&
+                            $connectionStatus === "connected"
+                        ) {
+                            isTimeOverrideActive = true;
+                            if (!overrideTime) {
+                                overrideTime = time.replace(":", "");
+                            }
+                            setTimeout(() => e.target.select(), 0);
                         }
-                        e.target.blur();
-                    }
-                    if (e.key === "Escape") {
+                    }}
+                    oninput={(e) => {
+                        let value = e.target.value.replace(/\D/g, "");
+                        if (value.length > 4) {
+                            value = value.substring(0, 4);
+                        }
+                        overrideTime = value;
+                    }}
+                    onblur={() => {
                         overrideTime = "";
                         isTimeOverrideActive = false;
-                        e.target.blur();
-                    }
-                }}
-                disabled={timeMode === "auto" ||
-                    timeMode === "period" ||
-                    $connectionStatus !== "connected"}
-                placeholder={isTimeOverrideActive ? "MMSS" : time}
-                maxlength="4"
-            />
-
-            <span class="separator"></span>
-
-            <div class="score-inline">
-                <NumericInput
-                    bind:value={homeTeamScore}
-                    disabled={scoreMode === "auto" ||
+                    }}
+                    onkeydown={(e) => {
+                        if (e.key === "Enter") {
+                            if (overrideTime) {
+                                applyTimeOverride();
+                            } else {
+                                overrideTime = "";
+                                isTimeOverrideActive = false;
+                            }
+                            e.target.blur();
+                        }
+                        if (e.key === "Escape") {
+                            overrideTime = "";
+                            isTimeOverrideActive = false;
+                            e.target.blur();
+                        }
+                    }}
+                    disabled={timeMode === "auto" ||
+                        timeMode === "period" ||
                         $connectionStatus !== "connected"}
-                    autoMode={scoreMode === "auto"}
-                    min={0}
+                    placeholder={isTimeOverrideActive ? "MMSS" : time}
+                    maxlength="4"
                 />
-                <span class="score-dash">-</span>
-                <NumericInput
-                    bind:value={awayTeamScore}
-                    disabled={scoreMode === "auto" ||
-                        $connectionStatus !== "connected"}
-                    autoMode={scoreMode === "auto"}
-                    min={0}
-                />
-                {#if scoreDirty}
-                    <span class="dirty-dot" title="Score/period not yet sent to overlay"></span>
-                {/if}
+            </div>
+
+            <div class="control-group">
+                <div class="score-inline">
+                    <NumericInput
+                        bind:value={homeTeamScore}
+                        disabled={scoreMode === "auto" ||
+                            $connectionStatus !== "connected"}
+                        autoMode={scoreMode === "auto"}
+                        min={0}
+                    />
+                    <span class="score-dash">-</span>
+                    <NumericInput
+                        bind:value={awayTeamScore}
+                        disabled={scoreMode === "auto" ||
+                            $connectionStatus !== "connected"}
+                        autoMode={scoreMode === "auto"}
+                        min={0}
+                    />
+                    {#if scoreDirty}
+                        <span class="dirty-dot" title="Score/period not yet sent to overlay"></span>
+                    {/if}
+                </div>
             </div>
         </div>
 
@@ -709,8 +711,6 @@
                     <span class="radio-text">manual</span>
                 </label>
             </div>
-
-            <span class="mode-separator"></span>
 
             <div class="mode-group">
                 <span class="mode-label">Time</span>
@@ -883,8 +883,15 @@
         margin-bottom: 8px;
         display: flex;
         align-items: center;
+        flex-wrap: wrap;
         gap: 12px;
         transition: all 0.3s ease;
+    }
+
+    .control-group {
+        display: flex;
+        align-items: center;
+        gap: 12px;
     }
 
     .row-main.active {
@@ -941,11 +948,9 @@
         color: #4caf50;
     }
 
-    .separator {
-        width: 1px;
-        height: 24px;
-        background: #333;
-        flex-shrink: 0;
+    .control-group + .control-group {
+        padding-left: 12px;
+        border-left: 1px solid #333;
     }
 
     .field-label {
@@ -1059,7 +1064,7 @@
     /* Row 2: Mode Selectors */
     .row-modes {
         padding: 8px 16px;
-        gap: 16px;
+        gap: 12px 16px;
     }
 
     .mode-group {
@@ -1068,19 +1073,17 @@
         gap: 10px;
     }
 
+    .mode-group + .mode-group {
+        padding-left: 16px;
+        border-left: 1px solid #333;
+    }
+
     .mode-label {
         font-size: 12px;
         font-weight: bold;
         color: #888;
         text-transform: uppercase;
         letter-spacing: 0.5px;
-    }
-
-    .mode-separator {
-        width: 1px;
-        height: 20px;
-        background: #333;
-        flex-shrink: 0;
     }
 
     .radio-option {
