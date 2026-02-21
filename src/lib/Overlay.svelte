@@ -34,6 +34,10 @@
     let awayPenalties = $state([]);
     let periodLengths = [0, 1200, 1200, 1200, 300, 0, 0];
 
+    // Shootout state
+    let homeShootout = $state([]);
+    let awayShootout = $state([]);
+
     // Derived display time that handles different modes and periods
     let displayTime = $derived.by(() => {
         // Always use internal clock since we manage everything internally now
@@ -82,6 +86,9 @@
                             break;
                         case "PenaltyUpdate":
                             handlePenaltyUpdate(eventData);
+                            break;
+                        case "ShootoutUpdate":
+                            handleShootoutUpdate(eventData);
                             break;
                         case "MatchUpdate":
                             // Legacy support - can be removed later
@@ -163,6 +170,11 @@
     function handlePenaltyUpdate(data) {
         if (data.homePenalties) homePenalties = data.homePenalties;
         if (data.awayPenalties) awayPenalties = data.awayPenalties;
+    }
+
+    function handleShootoutUpdate(data) {
+        if (Array.isArray(data.homeAttempts)) homeShootout = data.homeAttempts;
+        if (Array.isArray(data.awayAttempts)) awayShootout = data.awayAttempts;
     }
 
     function getAbsoluteSeconds() {
@@ -331,7 +343,7 @@
                 {:else}
                     <div class="team-name">{homeTeamName}</div>
                 {/if}
-                {#if homePenalties.length > 0}
+                {#if homePenalties.length > 0 && displayPeriod !== 5}
                     <div class="penalty-side home-penalties">
                         {#each homePenalties as penalty (penalty.id)}
                             {@const remaining = penaltyRemaining(penalty)}
@@ -341,6 +353,25 @@
                                 {/if}
                                 <span class="penalty-time">{formatRemaining(remaining)}</span>
                             </div>
+                        {/each}
+                    </div>
+                {/if}
+                {#if displayPeriod === 5}
+                    <div class="shootout-dots home-dots">
+                        {#each Array(5) as _, i}
+                            {#if i < homeShootout.length}
+                                <span class="shootout-dot" class:goal={homeShootout[i]} class:miss={!homeShootout[i]}></span>
+                            {:else}
+                                <span class="shootout-dot pending"></span>
+                            {/if}
+                        {/each}
+                        {#each Array(Math.max(0, Math.max(homeShootout.length, awayShootout.length) - 5)) as _, j}
+                            {@const idx = j + 5}
+                            {#if idx < homeShootout.length}
+                                <span class="shootout-dot sudden-death" class:goal={homeShootout[idx]} class:miss={!homeShootout[idx]}></span>
+                            {:else}
+                                <span class="shootout-dot sudden-death pending"></span>
+                            {/if}
                         {/each}
                     </div>
                 {/if}
@@ -375,7 +406,7 @@
                 {:else}
                     <div class="team-name">{awayTeamName}</div>
                 {/if}
-                {#if awayPenalties.length > 0}
+                {#if awayPenalties.length > 0 && displayPeriod !== 5}
                     <div class="penalty-side away-penalties">
                         {#each awayPenalties as penalty (penalty.id)}
                             {@const remaining = penaltyRemaining(penalty)}
@@ -385,6 +416,25 @@
                                 {/if}
                                 <span class="penalty-time">{formatRemaining(remaining)}</span>
                             </div>
+                        {/each}
+                    </div>
+                {/if}
+                {#if displayPeriod === 5}
+                    <div class="shootout-dots away-dots">
+                        {#each Array(5) as _, i}
+                            {#if i < awayShootout.length}
+                                <span class="shootout-dot" class:goal={awayShootout[i]} class:miss={!awayShootout[i]}></span>
+                            {:else}
+                                <span class="shootout-dot pending"></span>
+                            {/if}
+                        {/each}
+                        {#each Array(Math.max(0, Math.max(homeShootout.length, awayShootout.length) - 5)) as _, j}
+                            {@const idx = j + 5}
+                            {#if idx < awayShootout.length}
+                                <span class="shootout-dot sudden-death" class:goal={awayShootout[idx]} class:miss={!awayShootout[idx]}></span>
+                            {:else}
+                                <span class="shootout-dot sudden-death pending"></span>
+                            {/if}
                         {/each}
                     </div>
                 {/if}
@@ -550,5 +600,58 @@
 
     .penalty-time {
         font-variant-numeric: tabular-nums;
+    }
+
+    .shootout-dots {
+        position: absolute;
+        top: 100%;
+        display: grid;
+        grid-template-columns: repeat(5, 14px);
+        gap: 4px;
+        margin-top: 6px;
+        pointer-events: none;
+    }
+
+    .home-dots {
+        right: 0;
+        justify-items: end;
+    }
+
+    .away-dots {
+        left: 0;
+        justify-items: start;
+    }
+
+    .shootout-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        box-sizing: border-box;
+    }
+
+    .shootout-dot.goal {
+        background: #4caf50;
+        box-shadow: 0 0 6px rgba(76, 175, 80, 0.6);
+    }
+
+    .shootout-dot.miss {
+        background: #f44336;
+        box-shadow: 0 0 6px rgba(244, 67, 54, 0.6);
+    }
+
+    .shootout-dot.pending {
+        background: #555;
+        opacity: 0.5;
+        box-shadow: none;
+    }
+
+    .shootout-dot.sudden-death {
+        border: 2px solid #ffd700;
+    }
+
+    .shootout-dot.sudden-death.pending {
+        background: #555;
+        opacity: 0.5;
+        box-shadow: none;
     }
 </style>

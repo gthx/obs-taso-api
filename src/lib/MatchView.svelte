@@ -44,6 +44,10 @@
     let awayPenalties = $state([]);
     let penaltyIdCounter = $state(1);
 
+    // Shootout state
+    let homeShootout = $state([]);
+    let awayShootout = $state([]);
+
     // Key repeat protection
     let lastKeyPress = 0;
     const keyDebounceDelay = 150;
@@ -317,6 +321,34 @@
         }
     }
 
+    // Shootout functions
+    function addShootoutAttempt(team, result) {
+        if (team === "home") {
+            homeShootout = [...homeShootout, result];
+        } else {
+            awayShootout = [...awayShootout, result];
+        }
+        broadcastShootout();
+    }
+
+    function removeLastShootoutAttempt(team) {
+        if (team === "home") {
+            homeShootout = homeShootout.slice(0, -1);
+        } else {
+            awayShootout = awayShootout.slice(0, -1);
+        }
+        broadcastShootout();
+    }
+
+    function broadcastShootout() {
+        if ($connectionStatus === "connected") {
+            obsWebSocket.sendShootoutUpdate(
+                $state.snapshot(homeShootout),
+                $state.snapshot(awayShootout),
+            );
+        }
+    }
+
     // Next period mapping
     function nextPeriod(p) {
         if (p >= 1 && p <= 2) return p + 1;
@@ -429,6 +461,7 @@
             }
 
             broadcastPenalties();
+            broadcastShootout();
         }
     }
 
@@ -976,6 +1009,67 @@
                 {/each}
             </div>
         </div>
+
+        <!-- Row 4: Shootout (only in period 5 / RL) -->
+        {#if period === 5}
+            <div class="control-row row-shootout">
+                <div class="shootout-column">
+                    <span class="shootout-team-label">Home</span>
+                    <div class="shootout-dots-row">
+                        {#each homeShootout as attempt}
+                            <span class="shootout-dot-admin" class:goal={attempt} class:miss={!attempt}></span>
+                        {/each}
+                    </div>
+                    <div class="shootout-actions">
+                        <button
+                            class="shootout-btn shootout-goal"
+                            onclick={() => addShootoutAttempt("home", true)}
+                            disabled={$connectionStatus !== "connected"}
+                        >Goal</button>
+                        <button
+                            class="shootout-btn shootout-miss"
+                            onclick={() => addShootoutAttempt("home", false)}
+                            disabled={$connectionStatus !== "connected"}
+                        >Miss</button>
+                        {#if homeShootout.length > 0}
+                            <button
+                                class="shootout-btn shootout-undo"
+                                onclick={() => removeLastShootoutAttempt("home")}
+                            >Undo</button>
+                        {/if}
+                    </div>
+                </div>
+
+                <div class="shootout-divider"></div>
+
+                <div class="shootout-column">
+                    <span class="shootout-team-label">Away</span>
+                    <div class="shootout-dots-row">
+                        {#each awayShootout as attempt}
+                            <span class="shootout-dot-admin" class:goal={attempt} class:miss={!attempt}></span>
+                        {/each}
+                    </div>
+                    <div class="shootout-actions">
+                        <button
+                            class="shootout-btn shootout-goal"
+                            onclick={() => addShootoutAttempt("away", true)}
+                            disabled={$connectionStatus !== "connected"}
+                        >Goal</button>
+                        <button
+                            class="shootout-btn shootout-miss"
+                            onclick={() => addShootoutAttempt("away", false)}
+                            disabled={$connectionStatus !== "connected"}
+                        >Miss</button>
+                        {#if awayShootout.length > 0}
+                            <button
+                                class="shootout-btn shootout-undo"
+                                onclick={() => removeLastShootoutAttempt("away")}
+                            >Undo</button>
+                        {/if}
+                    </div>
+                </div>
+            </div>
+        {/if}
     {/if}
 </div>
 
@@ -1517,5 +1611,103 @@
     .penalty-remove:hover {
         background: #c62828;
         color: white;
+    }
+
+    /* Row 4: Shootout */
+    .row-shootout {
+        display: flex;
+        gap: 0;
+        padding: 12px 16px;
+    }
+
+    .shootout-column {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .shootout-divider {
+        width: 1px;
+        background: #333;
+        margin: 0 12px;
+        align-self: stretch;
+    }
+
+    .shootout-team-label {
+        font-size: 12px;
+        font-weight: bold;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .shootout-dots-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        min-height: 16px;
+    }
+
+    .shootout-dot-admin {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        display: inline-block;
+    }
+
+    .shootout-dot-admin.goal {
+        background: #4caf50;
+        box-shadow: 0 0 4px rgba(76, 175, 80, 0.5);
+    }
+
+    .shootout-dot-admin.miss {
+        background: #f44336;
+        box-shadow: 0 0 4px rgba(244, 67, 54, 0.5);
+    }
+
+    .shootout-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .shootout-btn {
+        height: 28px;
+        padding: 0 8px;
+        font-size: 12px;
+        font-weight: bold;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .shootout-goal {
+        background: #2e7d32;
+        color: white;
+    }
+
+    .shootout-goal:hover:not(:disabled) {
+        background: #388e3c;
+    }
+
+    .shootout-miss {
+        background: #c62828;
+        color: white;
+    }
+
+    .shootout-miss:hover:not(:disabled) {
+        background: #e53935;
+    }
+
+    .shootout-undo {
+        background: #444;
+        color: #aaa;
+    }
+
+    .shootout-undo:hover {
+        background: #555;
+        color: #fff;
     }
 </style>

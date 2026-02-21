@@ -304,6 +304,23 @@ class OBSWebSocketClient {
     }
   }
 
+  async sendShootoutUpdate(homeAttempts, awayAttempts) {
+    try {
+      await this.sendRequest("BroadcastCustomEvent", {
+        eventData: {
+          eventName: "ShootoutUpdate",
+          eventData: {
+            homeAttempts,
+            awayAttempts,
+            timestamp: Date.now(),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Failed to send shootout update:", error);
+    }
+  }
+
   async sendMatchInfo(matchInfo) {
     try {
       await this.sendRequest("BroadcastCustomEvent", {
