@@ -11,6 +11,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         admin: resolve(__dirname, "admin.html"),
+        match: resolve(__dirname, "match.html"),
         overlay: resolve(__dirname, "overlay.html"),
       },
     },

@@ -97,6 +97,27 @@
     function handleClockControl(data) {
         const { action } = data;
 
+        // Update score+period only from state-carrying events
+        if (
+            action === "clock_start" ||
+            action === "clock_pause" ||
+            action === "period_change"
+        ) {
+            if (data.homeScore !== undefined) homeScore = data.homeScore;
+            if (data.awayScore !== undefined) awayScore = data.awayScore;
+        }
+
+        // Update period from state-carrying events
+        if (
+            action === "clock_start" ||
+            action === "clock_pause" ||
+            action === "period_change"
+        ) {
+            if (data.period !== undefined && data.period !== internalPeriod) {
+                handlePeriodChange(data.period, data.periodLength || internalPeriodLength);
+            }
+        }
+
         switch (action) {
             case "clock_start":
                 startInternalClock(data.time);
@@ -188,6 +209,17 @@
             clockInterval = null;
         }
         accumulatedTime = 0;
+
+        // Report current time back to operator
+        sendClockSync();
+    }
+
+    function sendClockSync() {
+        if (!isConnected) return;
+        obsWebSocket.sendClockControl("clock_sync", {
+            time: displayTime,
+            seconds: internalSeconds,
+        });
     }
 
     function adjustInternalClock(delta) {
@@ -212,6 +244,7 @@
         if (internalSeconds > maxSeconds) {
             internalSeconds = maxSeconds;
         }
+        sendClockSync();
     }
 
     function resetInternalClock(time) {
@@ -226,6 +259,7 @@
             pauseInternalClock();
             startInternalClock(time);
         }
+        sendClockSync();
     }
 
     onMount(() => {
