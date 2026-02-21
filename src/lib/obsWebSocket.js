@@ -287,6 +287,23 @@ class OBSWebSocketClient {
     }
   }
 
+  async sendPenaltyUpdate(homePenalties, awayPenalties) {
+    try {
+      await this.sendRequest("BroadcastCustomEvent", {
+        eventData: {
+          eventName: "PenaltyUpdate",
+          eventData: {
+            homePenalties,
+            awayPenalties,
+            timestamp: Date.now(),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Failed to send penalty update:", error);
+    }
+  }
+
   async sendMatchInfo(matchInfo) {
     try {
       await this.sendRequest("BroadcastCustomEvent", {

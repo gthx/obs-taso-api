@@ -39,6 +39,11 @@
     let matchInfo = $state(null);
     let periodLengths = [0, 1200, 1200, 1200, 300, 0, 0];
 
+    // Penalty state
+    let homePenalties = $state([]);
+    let awayPenalties = $state([]);
+    let penaltyIdCounter = $state(1);
+
     // Key repeat protection
     let lastKeyPress = 0;
     const keyDebounceDelay = 150;
@@ -233,6 +238,85 @@
         return minutes * 60 + (seconds || 0);
     }
 
+    // Penalty functions
+    function getAbsoluteSeconds() {
+        let total = 0;
+        for (let i = 1; i < period; i++) total += periodLengths[i] || 0;
+        return total + timeToSeconds(time);
+    }
+
+    function formatAbsoluteTime(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+    }
+
+    function addPenalty(team, type) {
+        const penalty = {
+            id: penaltyIdCounter++,
+            playerNumber: "",
+            type,
+            startAbsolute: getAbsoluteSeconds(),
+        };
+        if (team === "home") {
+            homePenalties = [...homePenalties, penalty];
+        } else {
+            awayPenalties = [...awayPenalties, penalty];
+        }
+        broadcastPenalties();
+    }
+
+    function removePenalty(team, id) {
+        if (team === "home") {
+            homePenalties = homePenalties.filter((p) => p.id !== id);
+        } else {
+            awayPenalties = awayPenalties.filter((p) => p.id !== id);
+        }
+        broadcastPenalties();
+    }
+
+    function updatePenaltyPlayer(team, id, playerNumber) {
+        if (team === "home") {
+            homePenalties = homePenalties.map((p) =>
+                p.id === id ? { ...p, playerNumber } : p,
+            );
+        } else {
+            awayPenalties = awayPenalties.map((p) =>
+                p.id === id ? { ...p, playerNumber } : p,
+            );
+        }
+        broadcastPenalties();
+    }
+
+    function updatePenaltyStartTime(team, id, newAbsoluteStr) {
+        let value = newAbsoluteStr.replace(/\D/g, "");
+        if (value.length < 4) value = value.padStart(4, "0");
+        let minutes = parseInt(value.substring(0, 2));
+        let seconds = parseInt(value.substring(2, 4));
+        if (seconds > 59) seconds = 59;
+        const newAbsolute = minutes * 60 + seconds;
+
+        if (team === "home") {
+            homePenalties = homePenalties.map((p) =>
+                p.id === id ? { ...p, startAbsolute: newAbsolute } : p,
+            );
+        } else {
+            awayPenalties = awayPenalties.map((p) =>
+                p.id === id ? { ...p, startAbsolute: newAbsolute } : p,
+            );
+        }
+        broadcastPenalties();
+    }
+
+    function broadcastPenalties() {
+        if ($connectionStatus === "connected") {
+            obsWebSocket.sendPenaltyUpdate(
+                $state.snapshot(homePenalties),
+                $state.snapshot(awayPenalties),
+            );
+        }
+    }
+
     // Next period mapping
     function nextPeriod(p) {
         if (p >= 1 && p <= 2) return p + 1;
@@ -319,6 +403,7 @@
                 homeTeamLogo: matchInfo.homeTeamLogo || "",
                 awayTeamLogo: matchInfo.awayTeamLogo || "",
                 timeMode,
+                periodLengths,
             });
         }
     }
@@ -331,6 +416,7 @@
                 homeTeamLogo: matchInfo?.homeTeamLogo || "",
                 awayTeamLogo: matchInfo?.awayTeamLogo || "",
                 timeMode,
+                periodLengths,
             });
 
             // Send period_change with score+period to flush all state to overlay
@@ -341,6 +427,8 @@
             if (timeMode === "manual") {
                 obsWebSocket.sendClockControl("clock_reset", { time });
             }
+
+            broadcastPenalties();
         }
     }
 
@@ -743,6 +831,151 @@
                 </label>
             </div>
         </div>
+
+        <!-- Row 3: Penalties -->
+        <div class="control-row row-penalties">
+            <div class="penalty-column">
+                <div class="penalty-header">
+                    <span class="penalty-team-label">Home</span>
+                    <div class="penalty-add">
+                        <button
+                            class="penalty-btn penalty-2min"
+                            onclick={() => addPenalty("home", "2min")}
+                            disabled={$connectionStatus !== "connected"}
+                        >+2</button>
+                        <button
+                            class="penalty-btn penalty-2plus2"
+                            onclick={() => addPenalty("home", "2+2")}
+                            disabled={$connectionStatus !== "connected"}
+                        >+2+2</button>
+                    </div>
+                </div>
+                {#each homePenalties as penalty (penalty.id)}
+                    <div class="penalty-item">
+                        <input
+                            type="text"
+                            class="penalty-player-input"
+                            value={penalty.playerNumber}
+                            placeholder="#"
+                            maxlength="3"
+                            onfocus={(e) => setTimeout(() => e.target.select(), 0)}
+                            onblur={(e) => {
+                                if (e.target.value !== penalty.playerNumber) {
+                                    updatePenaltyPlayer("home", penalty.id, e.target.value);
+                                }
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                    updatePenaltyPlayer("home", penalty.id, e.target.value);
+                                    e.target.blur();
+                                }
+                                if (e.key === "Escape") e.target.blur();
+                            }}
+                        />
+                        <input
+                            type="text"
+                            class="penalty-time-edit"
+                            value={formatAbsoluteTime(penalty.startAbsolute)}
+                            maxlength="5"
+                            onfocus={(e) => {
+                                e.target.value = formatAbsoluteTime(penalty.startAbsolute).replace(":", "");
+                                setTimeout(() => e.target.select(), 0);
+                            }}
+                            onblur={(e) => {
+                                if (e.target.value !== formatAbsoluteTime(penalty.startAbsolute).replace(":", "")) {
+                                    updatePenaltyStartTime("home", penalty.id, e.target.value);
+                                }
+                                e.target.value = formatAbsoluteTime(penalty.startAbsolute);
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                    updatePenaltyStartTime("home", penalty.id, e.target.value);
+                                    e.target.blur();
+                                }
+                                if (e.key === "Escape") e.target.blur();
+                            }}
+                        />
+                        <span class="penalty-type">{penalty.type}</span>
+                        <button
+                            class="penalty-remove"
+                            onclick={() => removePenalty("home", penalty.id)}
+                        >X</button>
+                    </div>
+                {/each}
+            </div>
+
+            <div class="penalty-divider"></div>
+
+            <div class="penalty-column">
+                <div class="penalty-header">
+                    <span class="penalty-team-label">Away</span>
+                    <div class="penalty-add">
+                        <button
+                            class="penalty-btn penalty-2min"
+                            onclick={() => addPenalty("away", "2min")}
+                            disabled={$connectionStatus !== "connected"}
+                        >+2</button>
+                        <button
+                            class="penalty-btn penalty-2plus2"
+                            onclick={() => addPenalty("away", "2+2")}
+                            disabled={$connectionStatus !== "connected"}
+                        >+2+2</button>
+                    </div>
+                </div>
+                {#each awayPenalties as penalty (penalty.id)}
+                    <div class="penalty-item">
+                        <input
+                            type="text"
+                            class="penalty-player-input"
+                            value={penalty.playerNumber}
+                            placeholder="#"
+                            maxlength="3"
+                            onfocus={(e) => setTimeout(() => e.target.select(), 0)}
+                            onblur={(e) => {
+                                if (e.target.value !== penalty.playerNumber) {
+                                    updatePenaltyPlayer("away", penalty.id, e.target.value);
+                                }
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                    updatePenaltyPlayer("away", penalty.id, e.target.value);
+                                    e.target.blur();
+                                }
+                                if (e.key === "Escape") e.target.blur();
+                            }}
+                        />
+                        <input
+                            type="text"
+                            class="penalty-time-edit"
+                            value={formatAbsoluteTime(penalty.startAbsolute)}
+                            maxlength="5"
+                            onfocus={(e) => {
+                                e.target.value = formatAbsoluteTime(penalty.startAbsolute).replace(":", "");
+                                setTimeout(() => e.target.select(), 0);
+                            }}
+                            onblur={(e) => {
+                                if (e.target.value !== formatAbsoluteTime(penalty.startAbsolute).replace(":", "")) {
+                                    updatePenaltyStartTime("away", penalty.id, e.target.value);
+                                }
+                                e.target.value = formatAbsoluteTime(penalty.startAbsolute);
+                            }}
+                            onkeydown={(e) => {
+                                if (e.key === "Enter") {
+                                    updatePenaltyStartTime("away", penalty.id, e.target.value);
+                                    e.target.blur();
+                                }
+                                if (e.key === "Escape") e.target.blur();
+                            }}
+                        />
+                        <span class="penalty-type">{penalty.type}</span>
+                        <button
+                            class="penalty-remove"
+                            onclick={() => removePenalty("away", penalty.id)}
+                        >X</button>
+                    </div>
+                {/each}
+            </div>
+        </div>
     {/if}
 </div>
 
@@ -1133,5 +1366,156 @@
 
     label {
         color: #ffffff;
+    }
+
+    /* Row 3: Penalties */
+    .row-penalties {
+        display: flex;
+        gap: 0;
+        padding: 12px 16px;
+    }
+
+    .penalty-column {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .penalty-divider {
+        width: 1px;
+        background: #333;
+        margin: 0 12px;
+        align-self: stretch;
+    }
+
+    .penalty-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .penalty-team-label {
+        font-size: 12px;
+        font-weight: bold;
+        color: #888;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        min-width: 40px;
+    }
+
+    .penalty-add {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .penalty-player-input {
+        width: 36px;
+        height: 28px;
+        background: #2a2a2a;
+        color: #fff;
+        border: 1px solid #444;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: bold;
+        text-align: center;
+        padding: 0 4px;
+        box-sizing: border-box;
+    }
+
+    .penalty-player-input:focus {
+        outline: none;
+        border-color: #2196f3;
+        background: #333;
+    }
+
+    .penalty-btn {
+        height: 28px;
+        padding: 0 8px;
+        font-size: 12px;
+        font-weight: bold;
+        border-radius: 4px;
+        border: none;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .penalty-2min {
+        background: #c62828;
+        color: white;
+    }
+
+    .penalty-2min:hover:not(:disabled) {
+        background: #e53935;
+    }
+
+    .penalty-2plus2 {
+        background: #8b0000;
+        color: white;
+    }
+
+    .penalty-2plus2:hover:not(:disabled) {
+        background: #b71c1c;
+    }
+
+    .penalty-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 8px;
+        background: #2a2a2a;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+
+    .penalty-time-edit {
+        width: 50px;
+        height: 24px;
+        background: #1e1e1e;
+        color: #aaa;
+        border: 1px solid #333;
+        border-radius: 3px;
+        font-size: 12px;
+        font-family: monospace;
+        text-align: center;
+        padding: 0 4px;
+        box-sizing: border-box;
+    }
+
+    .penalty-time-edit:focus {
+        outline: none;
+        border-color: #2196f3;
+        background: #333;
+        color: #fff;
+    }
+
+    .penalty-type {
+        color: #888;
+        font-size: 12px;
+        min-width: 30px;
+    }
+
+    .penalty-remove {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        background: #444;
+        color: #aaa;
+        border: none;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: bold;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-left: auto;
+    }
+
+    .penalty-remove:hover {
+        background: #c62828;
+        color: white;
     }
 </style>

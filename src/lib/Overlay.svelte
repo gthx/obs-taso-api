@@ -1,5 +1,6 @@
 <script>
     import { onMount } from "svelte";
+    import { slide } from "svelte/transition";
     import {
         obsWebSocket,
         connectionStatus,
@@ -27,6 +28,11 @@
     let homeTeamLogo = $state("");
     let awayTeamLogo = $state("");
     let timeMode = $state("manual");
+
+    // Penalty state
+    let homePenalties = $state([]);
+    let awayPenalties = $state([]);
+    let periodLengths = [0, 1200, 1200, 1200, 300, 0, 0];
 
     // Derived display time that handles different modes and periods
     let displayTime = $derived.by(() => {
@@ -73,6 +79,9 @@
                             break;
                         case "MatchInfo":
                             handleMatchInfo(eventData);
+                            break;
+                        case "PenaltyUpdate":
+                            handlePenaltyUpdate(eventData);
                             break;
                         case "MatchUpdate":
                             // Legacy support - can be removed later
@@ -148,6 +157,29 @@
         if (data.homeTeamLogo) homeTeamLogo = data.homeTeamLogo;
         if (data.awayTeamLogo) awayTeamLogo = data.awayTeamLogo;
         if (data.timeMode) timeMode = data.timeMode;
+        if (data.periodLengths) periodLengths = data.periodLengths;
+    }
+
+    function handlePenaltyUpdate(data) {
+        if (data.homePenalties) homePenalties = data.homePenalties;
+        if (data.awayPenalties) awayPenalties = data.awayPenalties;
+    }
+
+    function getAbsoluteSeconds() {
+        let total = 0;
+        for (let i = 1; i < internalPeriod; i++) total += periodLengths[i] || 0;
+        return total + internalSeconds;
+    }
+
+    function penaltyRemaining(penalty) {
+        const duration = penalty.type === '2min' ? 120 : 240;
+        return Math.max(0, (penalty.startAbsolute + duration) - getAbsoluteSeconds());
+    }
+
+    function formatRemaining(seconds) {
+        const m = Math.floor(seconds / 60);
+        const s = seconds % 60;
+        return `${m}:${s.toString().padStart(2, "0")}`;
     }
 
     function handlePeriodChange(newPeriod, periodLength) {
@@ -331,6 +363,34 @@
                     <div class="team-name">{awayTeamName}</div>
                 {/if}
             </div>
+
+            <!-- Penalty pills -->
+            {#if homePenalties.length > 0 || awayPenalties.length > 0}
+                <div class="penalty-container">
+                    <div class="penalty-side home-penalties">
+                        {#each homePenalties as penalty (penalty.id)}
+                            {@const remaining = penaltyRemaining(penalty)}
+                            <div class="penalty-pill" class:expired={remaining === 0} transition:slide={{ duration: 300 }}>
+                                {#if penalty.playerNumber && penalty.playerNumber !== "0"}
+                                    <span class="penalty-player">#{penalty.playerNumber}</span>
+                                {/if}
+                                <span class="penalty-time">{formatRemaining(remaining)}</span>
+                            </div>
+                        {/each}
+                    </div>
+                    <div class="penalty-side away-penalties">
+                        {#each awayPenalties as penalty (penalty.id)}
+                            {@const remaining = penaltyRemaining(penalty)}
+                            <div class="penalty-pill" class:expired={remaining === 0} transition:slide={{ duration: 300 }}>
+                                <span class="penalty-time">{formatRemaining(remaining)}</span>
+                                {#if penalty.playerNumber && penalty.playerNumber !== "0"}
+                                    <span class="penalty-player">#{penalty.playerNumber}</span>
+                                {/if}
+                            </div>
+                        {/each}
+                    </div>
+                </div>
+            {/if}
         </div>
     {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}
         <div class="connecting">
@@ -377,6 +437,7 @@
         align-items: center;
         gap: 12px;
         background: transparent;
+        position: relative;
     }
 
     .team-section {
@@ -444,5 +505,56 @@
         border-radius: 5px;
         font-size: 14px;
         color: #ccc;
+    }
+
+    .penalty-container {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        display: flex;
+        justify-content: space-between;
+        margin-top: 8px;
+        pointer-events: none;
+    }
+
+    .penalty-side {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .home-penalties {
+        align-items: flex-start;
+    }
+
+    .away-penalties {
+        align-items: flex-end;
+    }
+
+    .penalty-pill {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(180, 30, 30, 0.9);
+        color: white;
+        padding: 3px 10px;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: bold;
+        white-space: nowrap;
+    }
+
+    .penalty-pill.expired {
+        background: rgba(80, 80, 80, 0.9);
+        opacity: 0.6;
+    }
+
+    .penalty-player {
+        font-variant-numeric: tabular-nums;
+    }
+
+    .penalty-time {
+        font-variant-numeric: tabular-nums;
     }
 </style>
