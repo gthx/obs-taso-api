@@ -331,6 +331,19 @@
                 {:else}
                     <div class="team-name">{homeTeamName}</div>
                 {/if}
+                {#if homePenalties.length > 0}
+                    <div class="penalty-side home-penalties">
+                        {#each homePenalties as penalty (penalty.id)}
+                            {@const remaining = penaltyRemaining(penalty)}
+                            <div class="penalty-pill" class:expired={remaining === 0} transition:slide={{ duration: 300 }}>
+                                {#if penalty.playerNumber && penalty.playerNumber !== "0"}
+                                    <span class="penalty-player">#{penalty.playerNumber}</span>
+                                {/if}
+                                <span class="penalty-time">{formatRemaining(remaining)}</span>
+                            </div>
+                        {/each}
+                    </div>
+                {/if}
             </div>
 
             <div class="score">
@@ -362,35 +375,20 @@
                 {:else}
                     <div class="team-name">{awayTeamName}</div>
                 {/if}
-            </div>
-
-            <!-- Penalty pills -->
-            {#if homePenalties.length > 0 || awayPenalties.length > 0}
-                <div class="penalty-container">
-                    <div class="penalty-side home-penalties">
-                        {#each homePenalties as penalty (penalty.id)}
-                            {@const remaining = penaltyRemaining(penalty)}
-                            <div class="penalty-pill" class:expired={remaining === 0} transition:slide={{ duration: 300 }}>
-                                {#if penalty.playerNumber && penalty.playerNumber !== "0"}
-                                    <span class="penalty-player">#{penalty.playerNumber}</span>
-                                {/if}
-                                <span class="penalty-time">{formatRemaining(remaining)}</span>
-                            </div>
-                        {/each}
-                    </div>
+                {#if awayPenalties.length > 0}
                     <div class="penalty-side away-penalties">
                         {#each awayPenalties as penalty (penalty.id)}
                             {@const remaining = penaltyRemaining(penalty)}
                             <div class="penalty-pill" class:expired={remaining === 0} transition:slide={{ duration: 300 }}>
-                                <span class="penalty-time">{formatRemaining(remaining)}</span>
                                 {#if penalty.playerNumber && penalty.playerNumber !== "0"}
                                     <span class="penalty-player">#{penalty.playerNumber}</span>
                                 {/if}
+                                <span class="penalty-time">{formatRemaining(remaining)}</span>
                             </div>
                         {/each}
                     </div>
-                </div>
-            {/if}
+                {/if}
+            </div>
         </div>
     {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}
         <div class="connecting">
@@ -437,13 +435,13 @@
         align-items: center;
         gap: 12px;
         background: transparent;
-        position: relative;
     }
 
     .team-section {
         display: flex;
         align-items: center;
         gap: 10px;
+        position: relative;
     }
 
     .team-name {
@@ -507,51 +505,47 @@
         color: #ccc;
     }
 
-    .penalty-container {
+    .penalty-side {
         position: absolute;
         top: 100%;
-        left: 0;
-        right: 0;
         display: flex;
-        justify-content: space-between;
-        margin-top: 8px;
+        flex-direction: column;
+        gap: 3px;
+        margin-top: 6px;
         pointer-events: none;
     }
 
-    .penalty-side {
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-    }
-
     .home-penalties {
-        align-items: flex-start;
+        right: 0;
+        align-items: flex-end;
     }
 
     .away-penalties {
-        align-items: flex-end;
+        left: 0;
+        align-items: flex-start;
     }
 
     .penalty-pill {
         display: flex;
         align-items: center;
-        gap: 6px;
-        background: rgba(180, 30, 30, 0.9);
-        color: white;
-        padding: 3px 10px;
+        gap: 5px;
+        background: #463882;
+        color: rgba(255, 255, 255, 0.95);
+        padding: 2px 8px;
         border-radius: 4px;
-        font-size: 14px;
+        font-size: 13px;
         font-weight: bold;
         white-space: nowrap;
     }
 
     .penalty-pill.expired {
-        background: rgba(80, 80, 80, 0.9);
-        opacity: 0.6;
+        background: #3a3a3a;
+        opacity: 0.5;
     }
 
     .penalty-player {
         font-variant-numeric: tabular-nums;
+        opacity: 0.8;
     }
 
     .penalty-time {
