@@ -17,7 +17,9 @@
 
     // Read API key from localStorage
     let torneopalApiKey = torneopalApi.getStoredApiKey();
-    let torneopalEnabled = $derived(torneopalApiKey && matchId);
+    let torneopalEnabled = $derived(
+        torneopalApiKey && matchId && !torneopalApi.isLocalMatch(matchId),
+    );
 
     let isConnecting = $state(false);
 
@@ -488,7 +490,10 @@
 
     // Reset game - fetch match data from API and reset scores
     async function resetGame() {
-        if (!matchId || !torneopalApiKey) {
+        if (!matchId) {
+            return;
+        }
+        if (!torneopalApi.isLocalMatch(matchId) && !torneopalApiKey) {
             return;
         }
 

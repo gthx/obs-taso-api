@@ -16,6 +16,20 @@
     // Match list state
     let matches = $state([]);
 
+    // Local match form state
+    let showLocalMatchForm = $state(false);
+    let localMatchData = $state({
+        homeTeamName: "",
+        homeTeamLogo: "",
+        awayTeamName: "",
+        awayTeamLogo: "",
+        date: "",
+        time: "",
+        venue: "",
+        category: "",
+    });
+    let localMatchError = $state("");
+
     function saveObsUrl(e) {
         obsWsUrl = e.target.value;
         localStorage.setItem("obs-ws-url", obsWsUrl);
@@ -124,6 +138,35 @@
         list.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 
         matches = list;
+    }
+
+    async function createLocalMatch() {
+        localMatchError = "";
+
+        if (
+            !localMatchData.homeTeamName ||
+            !localMatchData.awayTeamName ||
+            !localMatchData.date ||
+            !localMatchData.time
+        ) {
+            localMatchError = "Please fill in home team, away team, date and time.";
+            return;
+        }
+
+        const created = await torneopalApi.createLocalMatch(localMatchData);
+
+        localMatchData = {
+            homeTeamName: "",
+            homeTeamLogo: "",
+            awayTeamName: "",
+            awayTeamLogo: "",
+            date: "",
+            time: "",
+            venue: "",
+            category: "",
+        };
+        showLocalMatchForm = false;
+        loadMatchList();
     }
 
     function deleteMatch(matchId) {
@@ -238,6 +281,106 @@
 
         {#if loadError}
             <div class="error-message">{loadError}</div>
+        {/if}
+
+        <div class="local-match-row">
+            <button
+                class="local-match-toggle-btn"
+                onclick={() => (showLocalMatchForm = !showLocalMatchForm)}
+            >
+                {showLocalMatchForm ? "Cancel" : "+ Add Local Match"}
+            </button>
+        </div>
+
+        {#if showLocalMatchForm}
+            <div class="local-match-form">
+                <div class="form-row">
+                    <div class="setting-field">
+                        <label for="home-team-name">Home Team Name</label>
+                        <input
+                            id="home-team-name"
+                            type="text"
+                            bind:value={localMatchData.homeTeamName}
+                            placeholder="Home Team"
+                        />
+                    </div>
+                    <div class="setting-field">
+                        <label for="home-team-logo">Home Team Logo URL</label>
+                        <input
+                            id="home-team-logo"
+                            type="text"
+                            bind:value={localMatchData.homeTeamLogo}
+                            placeholder="(optional)"
+                        />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="setting-field">
+                        <label for="away-team-name">Away Team Name</label>
+                        <input
+                            id="away-team-name"
+                            type="text"
+                            bind:value={localMatchData.awayTeamName}
+                            placeholder="Away Team"
+                        />
+                    </div>
+                    <div class="setting-field">
+                        <label for="away-team-logo">Away Team Logo URL</label>
+                        <input
+                            id="away-team-logo"
+                            type="text"
+                            bind:value={localMatchData.awayTeamLogo}
+                            placeholder="(optional)"
+                        />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="setting-field">
+                        <label for="local-match-date">Date</label>
+                        <input
+                            id="local-match-date"
+                            type="date"
+                            bind:value={localMatchData.date}
+                        />
+                    </div>
+                    <div class="setting-field">
+                        <label for="local-match-time">Time</label>
+                        <input
+                            id="local-match-time"
+                            type="time"
+                            bind:value={localMatchData.time}
+                        />
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="setting-field">
+                        <label for="local-match-venue">Venue</label>
+                        <input
+                            id="local-match-venue"
+                            type="text"
+                            bind:value={localMatchData.venue}
+                            placeholder="(optional)"
+                        />
+                    </div>
+                    <div class="setting-field">
+                        <label for="local-match-category">Category</label>
+                        <input
+                            id="local-match-category"
+                            type="text"
+                            bind:value={localMatchData.category}
+                            placeholder="(optional)"
+                        />
+                    </div>
+                </div>
+
+                {#if localMatchError}
+                    <div class="error-message">{localMatchError}</div>
+                {/if}
+
+                <button class="create-local-btn" onclick={createLocalMatch}>
+                    Create Local Match
+                </button>
+            </div>
         {/if}
 
         {#if matches.length === 0}
@@ -445,6 +588,59 @@
         margin-bottom: 10px;
         color: #ef9a9a;
         font-size: 13px;
+    }
+
+    .local-match-row {
+        margin-bottom: 10px;
+    }
+
+    .local-match-toggle-btn {
+        padding: 5px 10px;
+        background: transparent;
+        color: #2196f3;
+        border: 1px solid #2196f3;
+        border-radius: 4px;
+        font-size: 12px;
+        cursor: pointer;
+    }
+
+    .local-match-toggle-btn:hover {
+        background: rgba(33, 150, 243, 0.1);
+    }
+
+    .local-match-form {
+        background: #181818;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 10px;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .form-row .setting-field {
+        flex: 1;
+        margin-bottom: 0;
+    }
+
+    .create-local-btn {
+        width: 100%;
+        padding: 6px 10px;
+        background: #2196f3;
+        color: white;
+        border: none;
+        border-radius: 4px;
+        font-size: 13px;
+        font-weight: bold;
+        cursor: pointer;
+    }
+
+    .create-local-btn:hover {
+        background: #42a5f5;
     }
 
     .empty-state {

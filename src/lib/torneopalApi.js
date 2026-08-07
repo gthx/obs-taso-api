@@ -200,43 +200,34 @@ class TorneopalAPI {
   }
 
   /**
-   * Get static local match ID
-   */
-  getLocalMatchId() {
-    return "local-match";
-  }
-
-  /**
-   * Create and store a local match
+   * Create and store a local match (fully manual, no API lookup required)
    */
   async createLocalMatch(matchData) {
     const {
       date,
       time,
-      homeTeamId,
-      homeTeamData,
+      homeTeamName,
+      homeTeamLogo,
       awayTeamName,
       awayTeamLogo,
       venue = "Local Venue",
       category = "Local Match"
     } = matchData;
 
-    const localMatchId = this.getLocalMatchId();
-    
+    const localMatchId = `local-${Date.now()}`;
+
     const localMatch = {
       match_id: localMatchId,
       date,
       time,
-      team_A_name: homeTeamData.team_name || "Home Team",
+      team_A_name: homeTeamName,
       team_B_name: awayTeamName,
-      club_A_crest: homeTeamData.club_crest || "",
+      club_A_crest: homeTeamLogo || "",
       club_B_crest: awayTeamLogo || "",
       venue_name: venue,
       category_name: category,
       is_local: true,
       created_at: new Date().toISOString(),
-      home_team_id: homeTeamId,
-      home_team_data: homeTeamData
     };
 
     // Store local match data
@@ -267,7 +258,7 @@ class TorneopalAPI {
    * Check if match ID is a local match
    */
   isLocalMatch(matchId) {
-    return matchId === "local-match";
+    return typeof matchId === "string" && matchId.startsWith("local-");
   }
 
   /**
