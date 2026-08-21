@@ -382,18 +382,16 @@
                 <div class="divider">-</div>
                 <div class="team-score">{awayScore}</div>
 
-                <!-- Time hanging below score -->
-                <div class="game-info">
-                    {#if displayPeriod === 4}
-                        <span class="time">{displayTime}</span>
-                    {:else if displayPeriod === 5}
-                        <!-- No time display for shootout -->
-                    {:else if timeMode === "period"}
-                        <span class="time period-mode">--:--</span>
-                    {:else}
-                        <span class="time">{displayTime}</span>
-                    {/if}
-                </div>
+                <!-- Time hanging below score (hidden entirely in period mode) -->
+                {#if timeMode !== "period"}
+                    <div class="game-info">
+                        {#if displayPeriod === 5}
+                            <!-- No time display for shootout -->
+                        {:else}
+                            <span class="time">{displayTime}</span>
+                        {/if}
+                    </div>
+                {/if}
             </div>
 
             <div class="team-section away">
@@ -541,10 +539,6 @@
 
     .time {
         font-variant-numeric: tabular-nums;
-    }
-
-    .time.period-mode {
-        opacity: 0.7;
     }
 
     .connecting {

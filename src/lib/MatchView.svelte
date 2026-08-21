@@ -107,6 +107,18 @@
         overlayPeriod = period;
     }
 
+    // In "period" mode there is no clock, so there are no clock events to carry
+    // the score to the overlay. Push score changes straight through instead.
+    $effect(() => {
+        const home = homeTeamScore;
+        const away = awayTeamScore;
+        if (timeMode !== "period" || $connectionStatus !== "connected") return;
+
+        obsWebSocket.sendScoreUpdate(home, away);
+        overlayHomeScore = home;
+        overlayAwayScore = away;
+    });
+
     // Handle time sync from overlay (scoreboard is source of truth for time)
     function handleClockSync(data) {
         if (data.time) {
