@@ -339,6 +339,25 @@ class OBSWebSocketClient {
     }
   }
 
+  async sendPlansiUpdate(active, kind, tabText, strip = null) {
+    try {
+      await this.sendRequest("BroadcastCustomEvent", {
+        eventData: {
+          eventName: "PlansiUpdate",
+          eventData: {
+            active,
+            kind,
+            tabText,
+            strip,
+            timestamp: Date.now(),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Failed to send plansi update:", error);
+    }
+  }
+
   async sendMatchInfo(matchInfo) {
     try {
       await this.sendRequest("BroadcastCustomEvent", {

@@ -184,6 +184,12 @@
     let gameResumedAtMs = $state(/** @type {number | null} */ (null));
     let lastBreakKey = "";
 
+    // Result plansi. The PSD's tab layer reads "LOPPUTULOS" - the "RESULT" in
+    // the Havainnekuva render is that render's own wording, and the rest of
+    // the overlay is Finnish. A plain string if it ever has to say otherwise.
+    const RESULT_TAB_TEXT = "LOPPUTULOS";
+    let resultActive = $state(false);
+
     let breakRemaining = $derived(
         breakEndsAtMs === null
             ? 0
@@ -555,7 +561,40 @@
         obsWebSocket.sendBreakUpdate(breakActive, breakRemaining, breakLabel);
     }
 
+    // The result plansi and the break panel are both full-width lower thirds,
+    // so only one of them is ever on air.
+    function pushPlansi() {
+        if ($connectionStatus !== "connected") return;
+        obsWebSocket.sendPlansiUpdate(
+            resultActive,
+            "result",
+            RESULT_TAB_TEXT,
+            null,
+        );
+    }
+
+    function hideResult() {
+        if (!resultActive) return;
+        resultActive = false;
+        pushPlansi();
+    }
+
+    function toggleResult() {
+        if (resultActive) {
+            hideResult();
+            return;
+        }
+
+        endBreak();
+        // The plansi carries no score of its own - it renders whatever the
+        // overlay last got, so make sure that is the current one.
+        pushScoreIfChanged();
+        resultActive = true;
+        pushPlansi();
+    }
+
     function startBreak(seconds, kind) {
+        hideResult();
         breakKind = kind;
         breakActive = true;
         breakEndsAtMs = Date.now() + Math.max(0, seconds) * 1000;
@@ -1676,7 +1715,10 @@
         </div>
 
         <!-- Row 4: Intermission panel -->
-        <div class="control-row row-break" class:active={breakActive}>
+        <div
+            class="control-row row-break"
+            class:active={breakActive || resultActive}
+        >
             <div class="control-group">
                 <button
                     class="break-btn"
@@ -1701,6 +1743,18 @@
                         : `Put "${formatPeriodLabel(period)} POWER BREAK" on air (${POWER_BREAK_SECONDS}s)`}
                 >
                     Power break
+                </button>
+
+                <button
+                    class="break-btn"
+                    class:on={resultActive}
+                    onclick={toggleResult}
+                    disabled={$connectionStatus !== "connected"}
+                    title={resultActive
+                        ? "Take the result plansi off air"
+                        : `Put the result plansi on air (${homeTeamScore}-${awayTeamScore})`}
+                >
+                    Result
                 </button>
 
                 <input
@@ -1769,6 +1823,13 @@
                     {/if}
                 {:else if heldAtPeriodEnd}
                     <span class="break-note">Intermission detected</span>
+                {/if}
+
+                {#if resultActive}
+                    <span class="break-label-preview">
+                        {RESULT_TAB_TEXT}
+                        {homeTeamScore}-{awayTeamScore}
+                    </span>
                 {/if}
             </div>
         </div>

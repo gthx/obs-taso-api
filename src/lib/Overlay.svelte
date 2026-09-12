@@ -7,6 +7,7 @@
         matchData,
     } from "./obsWebSocket.js";
     import InssiDivariLogo from "./InssiDivariLogo.svelte";
+    import Plansi from "./Plansi.svelte";
 
     let isConnected = $state(false);
     let retryCount = $state(0);
@@ -44,6 +45,14 @@
     let breakActive = $state(false);
     let breakRemaining = $state(0);
     let breakLabel = $state("ERÄTAUKO");
+
+    // Plansi (lower third). Same contract as the break panel: the operator
+    // owns what is on air, this view only renders what it is handed. The score
+    // and the teams come from the state above, so a plansi only carries what
+    // is specific to it.
+    let plansiActive = $state(false);
+    let plansiTabText = $state("");
+    let plansiStrip = $state(/** @type {any} */ (null));
 
     let breakTime = $derived.by(() => {
         const total = Math.max(0, breakRemaining);
@@ -106,6 +115,9 @@
                             break;
                         case "BreakUpdate":
                             handleBreakUpdate(eventData);
+                            break;
+                        case "PlansiUpdate":
+                            handlePlansiUpdate(eventData);
                             break;
                         case "MatchUpdate":
                             // Legacy support - can be removed later
@@ -205,6 +217,12 @@
             breakRemaining = data.remainingSeconds;
         }
         if (data.label) breakLabel = data.label;
+    }
+
+    function handlePlansiUpdate(data) {
+        plansiActive = !!data.active;
+        if (typeof data.tabText === "string") plansiTabText = data.tabText;
+        plansiStrip = data.strip ?? null;
     }
 
     function getAbsoluteSeconds() {
@@ -413,7 +431,22 @@
             class:colon={ch === ":"}>{ch}</span
         >{/each}{/snippet}
 
-<div class="scoreboard" class:hidden={breakActive}>
+{#if plansiActive}
+    <div class="plansi-layer" transition:fade={{ duration: 200 }}>
+        <Plansi
+            tabText={plansiTabText}
+            {homeTeamName}
+            {awayTeamName}
+            {homeTeamLogo}
+            {awayTeamLogo}
+            {homeScore}
+            {awayScore}
+            strip={plansiStrip}
+        />
+    </div>
+{/if}
+
+<div class="scoreboard" class:hidden={breakActive || plansiActive}>
     {#if $connectionStatus === "connected"}
         <!-- Home team logo on transparent background -->
 
@@ -557,6 +590,19 @@
         font-display: swap;
     }
 
+    /* The planssit are set in two faces, not one: the PSD's text layers put
+       Nineties Headliner on the team names and the score, and Urbanist Bold
+       on everything that is a label or a clock. Converted from
+       broadcast_assets/fontit/Urbanist/static/Urbanist-Bold.ttf. */
+    @font-face {
+        font-family: "Urbanist";
+        src:
+            url("/urbanist-bold-webfont.woff2") format("woff2"),
+            url("/urbanist-bold-webfont.woff") format("woff");
+        font-weight: 700;
+        font-display: swap;
+    }
+
     .scoreboard {
         --scale: 1.2; /* Adjust this value to scale the entire scoreboard */
         position: fixed;
@@ -670,6 +716,13 @@
 
     .scoreboard.hidden {
         display: none;
+    }
+
+    /* Only here to carry the fade - Plansi positions itself */
+    .plansi-layer {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
     }
 
     /* Intermission panel, measured off the broadcast asset */
