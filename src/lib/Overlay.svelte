@@ -380,9 +380,9 @@
             {/if}
 
             <div class="break-score-box">
-                <span class="break-team-score">{homeScore}</span>
+                <span class="break-team-score">{@render fixedDigits(homeScore)}</span>
                 <span class="break-divider">-</span>
-                <span class="break-team-score">{awayScore}</span>
+                <span class="break-team-score">{@render fixedDigits(awayScore)}</span>
             </div>
 
             {#if awayTeamLogo}
@@ -397,12 +397,21 @@
                 <InssiDivariLogo />
             </div>
 
-            <div class="break-countdown">{breakTime}</div>
+            <div class="break-countdown">{@render fixedDigits(breakTime)}</div>
 
             <div class="break-label">{breakLabel}</div>
         </div>
     </div>
 {/if}
+
+<!--
+  Nineties Headliner has proportional digits and no tnum feature, so anything
+  that changes while on air has to be set on a fixed advance per glyph.
+-->
+{#snippet fixedDigits(value)}{#each String(value).split("") as ch}<span
+            class="tick"
+            class:colon={ch === ":"}>{ch}</span
+        >{/each}{/snippet}
 
 <div class="scoreboard" class:hidden={breakActive}>
     {#if $connectionStatus === "connected"}
@@ -439,7 +448,7 @@
                                 {#if penalty.playerNumber && penalty.playerNumber !== "0"}
                                     <span class="penalty-player">#{penalty.playerNumber}</span>
                                 {/if}
-                                <span class="penalty-time">{formatRemaining(remaining)}</span>
+                                <span class="penalty-time">{@render fixedDigits(formatRemaining(remaining))}</span>
                             </div>
                         {/each}
                     </div>
@@ -466,9 +475,9 @@
             </div>
 
             <div class="score">
-                <div class="team-score">{homeScore}</div>
+                <div class="team-score">{@render fixedDigits(homeScore)}</div>
                 <div class="divider">-</div>
-                <div class="team-score">{awayScore}</div>
+                <div class="team-score">{@render fixedDigits(awayScore)}</div>
 
                 <!-- Time hanging below score (hidden entirely in period mode) -->
                 {#if timeMode !== "period"}
@@ -476,7 +485,9 @@
                         {#if displayPeriod === 5}
                             <!-- No time display for shootout -->
                         {:else}
-                            <span class="time">{displayTime}</span>
+                            <span class="time"
+                                >{@render fixedDigits(displayTime)}</span
+                            >
                         {/if}
                     </div>
                 {/if}
@@ -500,7 +511,7 @@
                                 {#if penalty.playerNumber && penalty.playerNumber !== "0"}
                                     <span class="penalty-player">#{penalty.playerNumber}</span>
                                 {/if}
-                                <span class="penalty-time">{formatRemaining(remaining)}</span>
+                                <span class="penalty-time">{@render fixedDigits(formatRemaining(remaining))}</span>
                             </div>
                         {/each}
                     </div>
@@ -534,6 +545,18 @@
 </div>
 
 <style>
+    /* The overlay is set in the league's face throughout. It ships a single
+       weight, so nothing below may ask for bold - the browser would synthesise
+       one and smear the letterforms. */
+    @font-face {
+        font-family: "Nineties Headliner";
+        src:
+            url("/ninetiesheadliner-regular-webfont.woff2") format("woff2"),
+            url("/ninetiesheadliner-regular-webfont.woff") format("woff");
+        font-weight: normal;
+        font-display: swap;
+    }
+
     .scoreboard {
         --scale: 1.2; /* Adjust this value to scale the entire scoreboard */
         position: fixed;
@@ -542,7 +565,7 @@
         display: flex;
         align-items: center;
         gap: calc(15px * var(--scale));
-        font-family: "Arial Black", Arial, sans-serif;
+        font-family: "Nineties Headliner", "Arial Black", Arial, sans-serif;
         user-select: none;
         cursor: none;
         transform: scale(var(--scale));
@@ -554,7 +577,6 @@
         color: white;
         padding: 8px 12px;
         border-radius: 6px;
-        font-weight: bold;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
     }
 
@@ -582,7 +604,6 @@
 
     .team-name {
         font-size: 20px;
-        font-weight: bold;
         color: #333;
     }
 
@@ -591,23 +612,25 @@
         align-items: center;
         background: #542c8c;
         border: 3px solid #7e66bd;
-        padding: 6px 12px;
+        /* Both faces default to a ~1.4 line-height, which was padding the box
+           out by ~10px on its own. Pinning it to 1 makes the height fall out
+           of the padding alone, close to the planssi's 51px at 1920. */
+        line-height: 1;
+        padding: 6px 8px;
         border-radius: 6px;
-        gap: 8px;
+        gap: 4px;
         position: relative;
     }
 
     .team-score {
         font-size: 24px;
-        font-weight: bold;
         color: white;
-        min-width: 30px;
+        min-width: 22px;
         text-align: center;
     }
 
     .divider {
-        font-size: 20px;
-        font-weight: bold;
+        font-size: 18px;
         color: white;
     }
 
@@ -619,17 +642,30 @@
         left: 50%;
         transform: translateX(-50%);
         background: #f5f5f5;
-        color: #333;
-        padding: 2px 10px 6px;
+        color: #0a0a0a;
+        padding: 3px 6px 5px;
         border-radius: 0 0 6px 6px;
-        font-size: 16px;
-        font-weight: bold;
+        /* Kellopohja.png sets the clock at the same digit height as the
+           score, so 24px here matches the .team-score above. */
+        font-size: 24px;
+        line-height: 1;
         min-width: 60px;
         text-align: center;
     }
 
     .time {
-        font-variant-numeric: tabular-nums;
+        display: inline-flex;
+        justify-content: center;
+    }
+
+    .tick {
+        display: inline-block;
+        width: 0.56em;
+        text-align: center;
+    }
+
+    .tick.colon {
+        width: 0.26em;
     }
 
     .scoreboard.hidden {
@@ -637,19 +673,10 @@
     }
 
     /* Intermission panel, measured off the broadcast asset */
-    @font-face {
-        font-family: "Nineties Headliner";
-        src:
-            url("/ninetiesheadliner-regular-webfont.woff2") format("woff2"),
-            url("/ninetiesheadliner-regular-webfont.woff") format("woff");
-        font-weight: normal;
-        font-display: swap;
-    }
-
     .break-panel {
         position: fixed;
         inset: 0;
-        font-family: "Arial Black", Arial, sans-serif;
+        font-family: "Nineties Headliner", "Arial Black", Arial, sans-serif;
         color: #fff;
         user-select: none;
         cursor: none;
@@ -679,7 +706,6 @@
     .break-label {
         flex-shrink: 0;
         margin-left: auto;
-        font-family: "Nineties Headliner", "Arial Black", Arial, sans-serif;
         font-size: 1.9vw;
         letter-spacing: 0.02em;
         white-space: nowrap;
@@ -725,7 +751,6 @@
         font-size: 1.5vw;
         min-width: 1.88vw;
         text-align: center;
-        font-variant-numeric: tabular-nums;
     }
 
     .break-divider {
@@ -739,7 +764,6 @@
         right: 0;
         text-align: center;
         font-size: 3.4vw;
-        font-variant-numeric: tabular-nums;
         letter-spacing: 0.02em;
         pointer-events: none;
     }
@@ -781,7 +805,6 @@
         padding: 2px 8px;
         border-radius: 4px;
         font-size: 13px;
-        font-weight: bold;
         white-space: nowrap;
     }
 
@@ -791,12 +814,11 @@
     }
 
     .penalty-player {
-        font-variant-numeric: tabular-nums;
         opacity: 0.8;
     }
 
     .penalty-time {
-        font-variant-numeric: tabular-nums;
+        display: inline-flex;
     }
 
     .shootout-dots {
