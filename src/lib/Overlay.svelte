@@ -367,7 +367,7 @@
 {#if breakActive}
     <!--
       Rebuilt from inssidivari_eratauko_planssi.png rather than using it:
-      bar 1170x107 at 1920x1080, fill #542c8c, 3px #7e66bd border, 10px radius,
+      bar 1170x107 at 1920x1080, fill #542c8c, 5px #7e66bd border, 10px radius,
       all measured off the asset. The wordmark is real text, so it can say
       something other than ERÄTAUKO without a new graphic.
     -->
@@ -550,7 +550,7 @@
     }
 
     .period-indicator {
-        background: #8b7fc7;
+        background: #7e66bd;
         color: white;
         padding: 8px 12px;
         border-radius: 6px;
@@ -589,7 +589,8 @@
     .score {
         display: flex;
         align-items: center;
-        background: #5b4b99;
+        background: #542c8c;
+        border: 3px solid #7e66bd;
         padding: 6px 12px;
         border-radius: 6px;
         gap: 8px;
@@ -612,7 +613,9 @@
 
     .game-info {
         position: absolute;
-        top: 100%;
+        /* top: 100% lands on the inner edge of the score box border, which
+           would clip it; +3px drops the clock past the border instead. */
+        top: calc(100% + 3px);
         left: 50%;
         transform: translateX(-50%);
         background: #f5f5f5;
@@ -712,7 +715,8 @@
         display: flex;
         align-items: center;
         gap: 0.42vw;
-        background: #5b4b99;
+        background: #542c8c;
+        border: 0.16vw solid #7e66bd;
         padding: 0.31vw 0.63vw;
         border-radius: 0.31vw;
     }
@@ -772,7 +776,7 @@
         display: flex;
         align-items: center;
         gap: 5px;
-        background: #463882;
+        background: #3f2069;
         color: rgba(255, 255, 255, 0.95);
         padding: 2px 8px;
         border-radius: 4px;
@@ -782,7 +786,7 @@
     }
 
     .penalty-pill.expired {
-        background: #3a3a3a;
+        background: #2d2839;
         opacity: 0.5;
     }
 
