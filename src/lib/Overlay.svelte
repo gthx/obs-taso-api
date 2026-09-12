@@ -6,7 +6,6 @@
         connectionStatus,
         matchData,
     } from "./obsWebSocket.js";
-    import InssiDivariLogo from "./InssiDivariLogo.svelte";
     import Plansi from "./Plansi.svelte";
 
     let isConnected = $state(false);
@@ -54,6 +53,12 @@
     let plansiTabText = $state("");
     let plansiStrip = $state(/** @type {any} */ (null));
 
+    function formatPeriodLabel(value) {
+        if (value === 4) return "JA";
+        if (value === 5) return "RL";
+        return `${value}.`;
+    }
+
     let breakTime = $derived.by(() => {
         const total = Math.max(0, breakRemaining);
         const minutes = Math.floor(total / 60);
@@ -72,6 +77,27 @@
     // Use internal period for display
     let displayPeriod = $derived.by(() => {
         return internalPeriod;
+    });
+
+    // Intermission and result are the same panel with a different tab and a
+    // different thing hanging under it, so they resolve to one Plansi.
+    let plansi = $derived.by(() => {
+        if (breakActive) {
+            return {
+                // The period rides in the tab, so the label is the wordmark
+                // alone - nothing is said twice.
+                tabText: formatPeriodLabel(displayPeriod),
+                strip: {
+                    kind: "break",
+                    countdown: breakTime,
+                    label: breakLabel,
+                },
+            };
+        }
+        if (plansiActive) {
+            return { tabText: plansiTabText, strip: plansiStrip };
+        }
+        return null;
     });
 
     // Get password from URL query parameter
@@ -382,46 +408,6 @@
     });
 </script>
 
-{#if breakActive}
-    <!--
-      Rebuilt from inssidivari_eratauko_planssi.png rather than using it:
-      bar 1170x107 at 1920x1080, fill #542c8c, 5px #7e66bd border, 10px radius,
-      all measured off the asset. The wordmark is real text, so it can say
-      something other than ERÄTAUKO without a new graphic.
-    -->
-    <div class="break-panel" transition:fade={{ duration: 200 }}>
-        <div class="break-combo">
-            {#if homeTeamLogo}
-                <img class="break-logo" src={homeTeamLogo} alt={homeTeamName} />
-            {:else}
-                <span class="break-team">{homeTeamName}</span>
-            {/if}
-
-            <div class="break-score-box">
-                <span class="break-team-score">{@render fixedDigits(homeScore)}</span>
-                <span class="break-divider">-</span>
-                <span class="break-team-score">{@render fixedDigits(awayScore)}</span>
-            </div>
-
-            {#if awayTeamLogo}
-                <img class="break-logo" src={awayTeamLogo} alt={awayTeamName} />
-            {:else}
-                <span class="break-team">{awayTeamName}</span>
-            {/if}
-        </div>
-
-        <div class="break-bar">
-            <div class="break-brand">
-                <InssiDivariLogo />
-            </div>
-
-            <div class="break-countdown">{@render fixedDigits(breakTime)}</div>
-
-            <div class="break-label">{breakLabel}</div>
-        </div>
-    </div>
-{/if}
-
 <!--
   Nineties Headliner has proportional digits and no tnum feature, so anything
   that changes while on air has to be set on a fixed advance per glyph.
@@ -431,22 +417,22 @@
             class:colon={ch === ":"}>{ch}</span
         >{/each}{/snippet}
 
-{#if plansiActive}
+{#if plansi}
     <div class="plansi-layer" transition:fade={{ duration: 200 }}>
         <Plansi
-            tabText={plansiTabText}
+            tabText={plansi.tabText}
             {homeTeamName}
             {awayTeamName}
             {homeTeamLogo}
             {awayTeamLogo}
             {homeScore}
             {awayScore}
-            strip={plansiStrip}
+            strip={plansi.strip}
         />
     </div>
 {/if}
 
-<div class="scoreboard" class:hidden={breakActive || plansiActive}>
+<div class="scoreboard" class:hidden={!!plansi}>
     {#if $connectionStatus === "connected"}
         <!-- Home team logo on transparent background -->
 
@@ -722,102 +708,6 @@
     .plansi-layer {
         position: fixed;
         inset: 0;
-        pointer-events: none;
-    }
-
-    /* Intermission panel, measured off the broadcast asset */
-    .break-panel {
-        position: fixed;
-        inset: 0;
-        font-family: "Nineties Headliner", "Arial Black", Arial, sans-serif;
-        color: #fff;
-        user-select: none;
-        cursor: none;
-    }
-
-    .break-bar {
-        position: absolute;
-        left: 19.58%; /* 376/1920 */
-        top: 78.06%; /* 843/1080 */
-        width: 60.94%; /* 1170/1920 */
-        height: 9.91%; /* 107/1080 */
-        box-sizing: border-box;
-        display: flex;
-        align-items: center;
-        background: #542c8c;
-        border: 0.26vw solid #7e66bd; /* 5px */
-        border-radius: 0.52vw; /* 10px */
-        padding: 0 2.4%; /* 28/1170 */
-    }
-
-    .break-brand {
-        width: 22.9%; /* 268/1170 */
-        height: 70%;
-        flex-shrink: 0;
-    }
-
-    .break-label {
-        flex-shrink: 0;
-        margin-left: auto;
-        font-size: 1.9vw;
-        letter-spacing: 0.02em;
-        white-space: nowrap;
-    }
-
-    /* Score combo sits above the bar, mirroring the scoreboard's treatment */
-    .break-combo {
-        position: absolute;
-        bottom: 22.7%;
-        left: 0;
-        right: 0;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 0.8vw;
-    }
-
-    .break-logo {
-        width: 3.75vw;
-        height: 3.75vw;
-        object-fit: contain;
-        flex-shrink: 0;
-        filter: drop-shadow(4px 8px 2px rgba(72, 61, 139, 0.3));
-    }
-
-    .break-team {
-        font-size: 1.25vw;
-        color: #333;
-        white-space: nowrap;
-    }
-
-    .break-score-box {
-        display: flex;
-        align-items: center;
-        gap: 0.42vw;
-        background: #542c8c;
-        border: 0.16vw solid #7e66bd;
-        padding: 0.31vw 0.63vw;
-        border-radius: 0.31vw;
-    }
-
-    .break-team-score {
-        font-size: 1.5vw;
-        min-width: 1.88vw;
-        text-align: center;
-    }
-
-    .break-divider {
-        font-size: 1.25vw;
-    }
-
-    /* Centred in the bar regardless of what flanks it */
-    .break-countdown {
-        position: absolute;
-        left: 0;
-        right: 0;
-        text-align: center;
-        font-size: 3.4vw;
-        letter-spacing: 0.02em;
         pointer-events: none;
     }
 

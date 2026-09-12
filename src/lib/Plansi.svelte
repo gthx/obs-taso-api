@@ -9,8 +9,11 @@
      * y=920 - same bar, same tab, same score box - so that part is this
      * component and the variants only supply:
      *
-     *   - `tabText`  "RESULT" on the result plansi, the goal time on a goal one
-     *   - `strip`    the scorer/assist bar, goal plansi only, home or away side
+     *   - `tabText`  "LOPPUTULOS" on the result plansi, the goal time on a goal
+     *                one, the period on an intermission
+     *   - `strip`    what hangs under the bar: the half-width scorer/assist
+     *                bar on a goal, or the full-width countdown bar on an
+     *                intermission. Nothing on the result plansi.
      *
      * Measured off the assets at 1920x1080 (see the CSS for the conversions):
      *   bar        x 378..1542 (1165x76) at y 845, white, 8px radius
@@ -32,6 +35,8 @@
      * matching PSD layer's bounding box, so these are the real numbers.
      */
 
+    import InssiDivariLogo from "./InssiDivariLogo.svelte";
+
     let {
         tabText = "",
         homeTeamName = "",
@@ -40,7 +45,12 @@
         awayTeamLogo = "",
         homeScore = 0,
         awayScore = 0,
-        /** @type {{side: "home"|"away", scorer?: string, assist?: string}|null} */
+        /**
+         * What hangs under the bar, if anything. Two shapes so far:
+         *   {kind:"goal",  side:"home"|"away", scorer, assist}
+         *   {kind:"break", countdown, label}
+         * @type {any}
+         */
         strip = null,
     } = $props();
 </script>
@@ -85,7 +95,19 @@
         {/if}
     </div>
 
-    {#if strip}
+    {#if strip?.kind === "break"}
+        <div class="plansi-break">
+            <div class="plansi-break-brand">
+                <InssiDivariLogo />
+            </div>
+
+            <div class="plansi-break-countdown">
+                {@render fixedDigits(strip.countdown)}
+            </div>
+
+            <div class="plansi-break-label">{strip.label}</div>
+        </div>
+    {:else if strip?.kind === "goal"}
         <div class="plansi-strip" class:away={strip.side === "away"}>
             <span class="plansi-strip-inner">
                 {#if strip.scorer}
@@ -232,6 +254,52 @@
 
     .tick.colon {
         width: 0.26em;
+    }
+
+    /* Intermission: the old standalone break bar, re-cut to the plansi's width
+       and hung off the bar instead of floating on its own. Its look is the
+       user's, not the PSD's - the league's eratauko asset has no text layers -
+       so the fill, the 5px border and the 10px radius are carried over as they
+       were. Height is 92 rather than the asset's 107: the plansi bar above it
+       is the fixed element at y845, so the strip is what has to give for the
+       composition to end at y1025, just inside the 5% title-safe line. */
+    .plansi-break {
+        position: relative;
+        display: flex;
+        align-items: center;
+        height: 4.8vw; /* 92 */
+        margin-top: 0.625vw; /* 12 - same gap as the goal strip */
+        padding: 0 2.4%;
+        box-sizing: border-box;
+        background: #542c8c;
+        border: 0.26vw solid #7e66bd; /* 5 */
+        border-radius: 0.52vw; /* 10 */
+        color: #fff;
+    }
+
+    .plansi-break-brand {
+        width: 22.9%;
+        height: 70%;
+        flex-shrink: 0;
+    }
+
+    /* Centred in the bar regardless of what flanks it */
+    .plansi-break-countdown {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 3.05vw;
+        letter-spacing: 0.02em;
+        pointer-events: none;
+    }
+
+    .plansi-break-label {
+        flex-shrink: 0;
+        margin-left: auto;
+        font-size: 1.7vw;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
     }
 
     /* Goal plansi only: half-width strip under the bar, on the scoring side */

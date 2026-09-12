@@ -214,13 +214,10 @@
     let period = $state(1);
     let time = $state("00:00");
 
-    // The wordmark carries the period it belongs to: "1. ERÄTAUKO" after the
-    // first period, "3. POWER BREAK" during the third. During an intermission
-    // `period` is already held at the one that just ended.
+    // Just the wordmark: the panel's tab carries the period it belongs to, so
+    // prefixing it here would say it twice.
     let breakLabel = $derived(
-        `${formatPeriodLabel(period)} ${
-            breakKind === "powerbreak" ? "POWER BREAK" : "ERÄTAUKO"
-        }`,
+        breakKind === "powerbreak" ? "POWER BREAK" : "ERÄTAUKO",
     );
 
     // Track what the overlay currently has (last sent via ClockControl)
@@ -1810,7 +1807,10 @@
                             : formatAbsoluteTime(breakRemaining)}
                     </span>
 
-                    <span class="break-label-preview">{breakLabel}</span>
+                    <span class="break-label-preview">
+                        {formatPeriodLabel(period)}
+                        {breakLabel}
+                    </span>
 
                     {#if gameResumedAtMs !== null}
                         <span class="break-resumed">
