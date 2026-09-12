@@ -25,13 +25,136 @@
 
     // Score control state
     let scoreMode = $state("auto"); // "auto" or "manual"
-    let apiScores = $state(null);
+    let apiScores = $state(/** @type {any} */ (null));
 
     // Time control state
     let timeMode = $state("auto"); // "auto", "manual", or "period"
 
-    // Global timer state
+    // Global timer state. In manual mode this is the overlay clock; in auto
+    // mode it gates the score polling (paused = no requests, overlay frozen on
+    // the last value pushed). Either way it means "the clock on air is moving".
     let globalTimerActive = $state(false);
+
+    // Score polling state. getScore is never cached and may be polled at most
+    // once per second, so that is exactly the rate we use.
+    const POLL_INTERVAL_MS = 1000;
+
+    // Nothing on air changes during an intermission, so polling stops for the
+    // duration. The countdown itself brings it back, which is why the break
+    // panel can pause it safely where a manual pause could not.
+    const BREAK_POLL_RESUME_SEC = 5;
+
+    // How long the official clock has to run before the panel comes off air
+    const BREAK_AUTOHIDE_MS = 2000;
+    // Torneopal carries no intermission length (period_sec and
+    // period_lengths_sec are playing time only, and p*_start_time/p*_end_time
+    // come back empty), so these are fixed defaults. Each press starts fresh;
+    // the time field adjusts the running countdown only.
+    const DEFAULT_BREAK_SECONDS = 15 * 60;
+    const POWER_BREAK_SECONDS = 60;
+    let isPollingScores = $state(false);
+    let pollError = $state("");
+    let lastPollAt = $state(null);
+    let isFetchingScore = false;
+
+    // Auto clock state: the API is the source of truth, so the time is set
+    // absolutely on every poll and may jump backwards.
+    let apiSeconds = $state(null);
+    let apiTimerOn = $state(false);
+    let apiPeriod = $state(/** @type {number | null} */ (null));
+
+    // Torneopal advances live_period the moment the previous period is
+    // confirmed over, and resets live_time with it. Taken at face value that
+    // puts "3rd 00:00" on air for the whole intermission, so the previous
+    // period is held at its end time until the clock actually starts.
+    let heldAtPeriodEnd = $state(false);
+    let lastAutoKey = "";
+
+    // Manual trim on top of the computed clock (seconds). Auto mode only -
+    // the manual clock is never affected by this. Latency can only make us
+    // late, never early, so the correction is forward-only.
+    const MAX_DRIFT = 5;
+    let driftOffset = $state(0);
+
+    // Exact clock. getScore reports when the running clock was started
+    // (live_timer_start) and the playing time at that moment
+    // (live_timer_start_time), so the current playing time is arithmetic
+    // instead of a 1 s-quantised sample that is already stale on arrival.
+    let anchorWallMs = $state(/** @type {number | null} */ (null));
+    let anchorSeconds = $state(/** @type {number | null} */ (null));
+    let apiReceivedAtMs = $state(/** @type {number | null} */ (null));
+    let nowMs = $state(Date.now());
+
+    // live_timer_start is a server timestamp with no zone, so it is read as
+    // local time. Any disagreement between this machine's clock and the
+    // server's turns up here: it is measured, shown in the header and
+    // corrected for, so the overlay only ever receives a finished time.
+    const MAX_TRUSTED_SKEW_MS = 60000;
+    const SKEW_SAMPLE_COUNT = 10;
+    let skewSamples = $state(/** @type {number[]} */ ([]));
+    let clockSkewMs = $state(/** @type {number | null} */ (null));
+    let lastRttMs = $state(/** @type {number | null} */ (null));
+
+    let skewTrusted = $derived(
+        clockSkewMs !== null && Math.abs(clockSkewMs) <= MAX_TRUSTED_SKEW_MS,
+    );
+
+    // The exact computation drives the clock only when the official clock is
+    // running and we have a trustworthy anchor to compute from.
+    let usingExactClock = $derived(
+        apiTimerOn &&
+            skewTrusted &&
+            anchorWallMs !== null &&
+            anchorSeconds !== null,
+    );
+
+    // Whole seconds since the reading we are bounded by arrived
+    let sampleAgeSeconds = $derived(
+        apiReceivedAtMs === null
+            ? 0
+            : Math.floor(Math.max(0, nowMs - apiReceivedAtMs) / 1000),
+    );
+
+    function clampToPeriod(seconds) {
+        const periodLength = periodLengths[period] || 0;
+        const floored = Math.max(0, seconds);
+        return periodLength > 0 ? Math.min(floored, periodLength) : floored;
+    }
+
+    // The time actually put on air. A stopped clock reports an exact value
+    // that is not going stale, so there is nothing to correct while it is off.
+    let effectiveSeconds = $derived.by(() => {
+        if (heldAtPeriodEnd) return periodLengths[period] || 0;
+        if (!apiTimerOn) return apiSeconds;
+
+        if (usingExactClock) {
+            const elapsedMs = nowMs + clockSkewMs - anchorWallMs;
+            const computed = anchorSeconds + Math.floor(elapsedMs / 1000);
+
+            // live_time, live_timer_start and live_timer_start_time all carry
+            // one-second resolution, so the API exposes no sub-second phase at
+            // all: anticipating the boundary can only put a second on air that
+            // the official display has not reached yet. The computation fills
+            // gaps between polls, but never leads what the server reported.
+            const bounded =
+                apiSeconds === null
+                    ? computed
+                    : Math.min(
+                          Math.max(computed, apiSeconds),
+                          apiSeconds + sampleAgeSeconds,
+                      );
+
+            return clampToPeriod(bounded + driftOffset);
+        }
+
+        // No usable anchor: fall back to the reported time
+        if (apiSeconds === null) return null;
+        return clampToPeriod(apiSeconds + driftOffset);
+    });
+
+    let lastPollLabel = $derived(
+        lastPollAt ? new Date(lastPollAt).toLocaleTimeString() : "never",
+    );
 
     // Time override functionality
     let overrideTime = $state("");
@@ -50,6 +173,29 @@
     let homeShootout = $state([]);
     let awayShootout = $state([]);
 
+    // Intermission panel. The countdown is anchored to a wall-clock instant so
+    // it cannot drift, and the operator types the remaining time the same way
+    // as the manual game clock.
+    let breakActive = $state(false);
+    let breakEndsAtMs = $state(/** @type {number | null} */ (null));
+    let breakInput = $state("");
+    let breakKind = $state("intermission"); // "intermission" or "powerbreak"
+    let breakInputActive = $state(false);
+    let gameResumedAtMs = $state(/** @type {number | null} */ (null));
+    let lastBreakKey = "";
+
+    let breakRemaining = $derived(
+        breakEndsAtMs === null
+            ? 0
+            : Math.max(0, Math.ceil((breakEndsAtMs - nowMs) / 1000)),
+    );
+
+    // A boolean rather than the remaining seconds, so the polling effect is
+    // not torn down and restarted on every tick
+    let breakPausesPolling = $derived(
+        breakActive && breakRemaining > BREAK_POLL_RESUME_SEC,
+    );
+
     // Key repeat protection
     let lastKeyPress = 0;
     const keyDebounceDelay = 150;
@@ -61,6 +207,15 @@
     let awayTeamScore = $state(0);
     let period = $state(1);
     let time = $state("00:00");
+
+    // The wordmark carries the period it belongs to: "1. ERÄTAUKO" after the
+    // first period, "3. POWER BREAK" during the third. During an intermission
+    // `period` is already held at the one that just ended.
+    let breakLabel = $derived(
+        `${formatPeriodLabel(period)} ${
+            breakKind === "powerbreak" ? "POWER BREAK" : "ERÄTAUKO"
+        }`,
+    );
 
     // Track what the overlay currently has (last sent via ClockControl)
     let overlayHomeScore = $state(0);
@@ -181,10 +336,339 @@
 
     // Time control functions
     function setTimeMode(mode) {
+        const previous = timeMode;
         timeMode = mode;
         localStorage.setItem("time-mode", mode);
+
+        if (previous !== "auto" && mode === "auto") {
+            // The API feed runs by default
+            globalTimerActive = true;
+        } else if (previous === "auto" && mode !== "auto") {
+            globalTimerActive = false;
+        }
+        lastAutoKey = "";
+
         updateMatchData();
     }
+
+    // Drift functions - auto mode only
+    function setDrift(value) {
+        driftOffset = value;
+        if (matchId) {
+            localStorage.setItem(`drift-offset-${matchId}`, String(value));
+        }
+        applyAutoClock();
+    }
+
+    function adjustDrift(delta) {
+        setDrift(Math.min(MAX_DRIFT, Math.max(0, driftOffset + delta)));
+    }
+
+    function resetDrift() {
+        setDrift(0);
+    }
+
+    function formatDrift(value) {
+        return `${value > 0 ? "+" : ""}${value}s`;
+    }
+
+    let driftTitle = $derived.by(() => {
+        if (effectiveSeconds === null) return "Waiting for API time";
+        if (heldAtPeriodEnd) {
+            return `Intermission — period ${period} held at ${formatAbsoluteTime(effectiveSeconds)}`;
+        }
+        if (!apiTimerOn) {
+            return `Clock stopped — API ${formatAbsoluteTime(apiSeconds)} used as is, no latency to correct`;
+        }
+        const source = usingExactClock ? "Computed" : "Reported live_time";
+        return `${source} + ${driftOffset}s → overlay ${formatAbsoluteTime(effectiveSeconds)}`;
+    });
+
+    // How far the time on air is from the reading the server gave us
+    let leadSeconds = $derived(
+        apiSeconds === null || effectiveSeconds === null
+            ? 0
+            : effectiveSeconds - apiSeconds,
+    );
+
+    let syncLabel = $derived.by(() => {
+        if (clockSkewMs === null) return "Sync ?";
+        if (!skewTrusted) return "Sync off";
+
+        const sign = clockSkewMs < 0 ? "−" : "+";
+        return `Sync ${sign}${(Math.abs(clockSkewMs) / 1000).toFixed(1)}s`;
+    });
+
+    let syncTitle = $derived.by(() => {
+        if (clockSkewMs === null) {
+            return "Server clock offset is measured while the official clock runs";
+        }
+
+        const lines = [
+            `Server clock − this machine: ${(clockSkewMs / 1000).toFixed(2)}s`,
+            `${skewSamples.length}/${SKEW_SAMPLE_COUNT} samples, round trip ${lastRttMs}ms`,
+        ];
+
+        if (!skewTrusted) {
+            lines.push(
+                `Beyond ±${MAX_TRUSTED_SKEW_MS / 1000}s — falling back to the reported live_time.`,
+                "Check this machine's clock and the time zone of live_timer_start.",
+            );
+        } else if (usingExactClock) {
+            lines.push(
+                `Anchored at ${formatAbsoluteTime(anchorSeconds)} from live_timer_start,`,
+                "filling gaps between polls without leading the reported live_time.",
+                "The API only carries whole seconds, so the sub-second phase is unknowable.",
+            );
+        } else if (!apiTimerOn) {
+            lines.push("Official clock stopped — live_time used as is");
+        } else {
+            lines.push("No usable anchor — falling back to the reported live_time");
+        }
+
+        return lines.join("\n");
+    });
+
+    let apiTimerTitle = $derived.by(() => {
+        if (!apiScores) return "Waiting for getScore";
+        return [
+            `live_timer_on=${apiScores.live_timer_on}`,
+            `live_period=${apiScores.live_period}`,
+            `live_time=${apiScores.live_time || "(empty)"}`,
+            `live_timer_start=${apiScores.live_timer_start || "(empty)"}`,
+            `live_timer_start_time=${apiScores.live_timer_start_time || "(empty)"}`,
+        ].join("\n");
+    });
+
+    // HH:MM:SS or MM:SS to seconds
+    function parseClockValue(raw) {
+        if (!raw) return null;
+
+        const parts = String(raw).split(":").map(Number);
+        if (parts.some(isNaN)) return null;
+
+        if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+        if (parts.length === 2) return parts[0] * 60 + parts[1];
+        return null;
+    }
+
+    // Parse the playing time from getScore. live_time (HH:MM:SS) is the
+    // populated field in practice; live_time_mmss is often empty.
+    function parseApiTime(score) {
+        return parseClockValue(score.live_time || score.live_time_mmss);
+    }
+
+    // "2025-03-01 18:10:43" read as local time. Parsed by hand rather than
+    // handed to Date(), whose treatment of a zone-less string varies.
+    function parseTimestamp(value) {
+        if (!value) return null;
+
+        const match = String(value).match(
+            /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})/,
+        );
+        if (!match) return null;
+
+        const [, year, month, day, hour, minute, second] = match.map(Number);
+        return new Date(year, month - 1, day, hour, minute, second).getTime();
+    }
+
+    // Compare the server's own live_time against what the anchor implies for
+    // the moment we received it. live_time is floored to whole seconds, so a
+    // single sample can only under-estimate the offset - keep a short window
+    // and take the maximum, which converges on the real value from below.
+    function recordSkewSample(reportedSeconds, receivedAtMs, rttMs) {
+        if (anchorWallMs === null || anchorSeconds === null) return;
+
+        const computedMs = anchorSeconds * 1000 + (receivedAtMs - anchorWallMs);
+        const observed = reportedSeconds * 1000 - computedMs + rttMs / 2;
+
+        skewSamples = [...skewSamples, observed].slice(-SKEW_SAMPLE_COUNT);
+        clockSkewMs = Math.round(Math.max(...skewSamples));
+    }
+
+    // Push the API time (plus drift) to the overlay as an absolute value.
+    // Guarded so a drift nudge while paused does not leak to the overlay.
+    function applyAutoClock() {
+        if (timeMode !== "auto" || !globalTimerActive) return;
+
+        const seconds = effectiveSeconds;
+        if (seconds === null) return;
+
+        time = formatAbsoluteTime(seconds);
+
+        if ($connectionStatus !== "connected") return;
+
+        // Avoid re-broadcasting an unchanged clock every second
+        const key = `${seconds}|${period}|${homeTeamScore}|${awayTeamScore}`;
+        if (key === lastAutoKey) return;
+        lastAutoKey = key;
+
+        sendClockWithState("clock_set", { time, seconds });
+    }
+
+    // In manual mode there is no clock event to carry an API score change,
+    // so push it on its own.
+    function pushScoreIfChanged() {
+        if ($connectionStatus !== "connected") return;
+        if (
+            homeTeamScore === overlayHomeScore &&
+            awayTeamScore === overlayAwayScore
+        ) {
+            return;
+        }
+
+        obsWebSocket.sendScoreUpdate(homeTeamScore, awayTeamScore);
+        overlayHomeScore = homeTeamScore;
+        overlayAwayScore = awayTeamScore;
+    }
+
+    // The anchor is refreshed once per second, but the time it implies can be
+    // evaluated at any instant. Ticking locally lets the overlay change on the
+    // real second boundary instead of whenever a poll happens to land.
+    $effect(() => {
+        if (timeMode !== "auto" || !globalTimerActive || !usingExactClock) {
+            return;
+        }
+
+        const intervalId = setInterval(() => {
+            nowMs = Date.now();
+            applyAutoClock();
+        }, 100);
+
+        return () => clearInterval(intervalId);
+    });
+
+    // Intermission functions
+    function formatPeriodLabel(value) {
+        if (value === 4) return "JA";
+        if (value === 5) return "RL";
+        return `${value}.`;
+    }
+
+    function pushBreak() {
+        if ($connectionStatus !== "connected") return;
+
+        const key = `${breakActive}|${breakRemaining}|${breakLabel}`;
+        if (key === lastBreakKey) return;
+        lastBreakKey = key;
+
+        obsWebSocket.sendBreakUpdate(breakActive, breakRemaining, breakLabel);
+    }
+
+    function startBreak(seconds, kind) {
+        breakKind = kind;
+        breakActive = true;
+        breakEndsAtMs = Date.now() + Math.max(0, seconds) * 1000;
+        gameResumedAtMs = null;
+        nowMs = Date.now();
+        pushBreak();
+    }
+
+    function endBreak() {
+        breakActive = false;
+        breakEndsAtMs = null;
+        gameResumedAtMs = null;
+        breakInput = "";
+        breakInputActive = false;
+        pushBreak();
+    }
+
+    // Each button toggles its own kind, so pressing the other one switches
+    function toggleBreak(kind) {
+        if (breakActive && breakKind === kind) {
+            endBreak();
+            return;
+        }
+
+        startBreak(
+            kind === "powerbreak" ? POWER_BREAK_SECONDS : DEFAULT_BREAK_SECONDS,
+            kind,
+        );
+    }
+
+    // Same MMSS entry as the manual game clock
+    function applyBreakInput() {
+        if (!breakInput) return;
+
+        let value = breakInput.replace(/\D/g, "").padStart(4, "0");
+        const minutes = parseInt(value.substring(0, 2));
+        let seconds = parseInt(value.substring(2, 4));
+        if (seconds > 59) seconds = 59;
+
+        const total = minutes * 60 + seconds;
+        breakEndsAtMs = Date.now() + total * 1000;
+        gameResumedAtMs = null;
+        nowMs = Date.now();
+
+        breakInput = "";
+        breakInputActive = false;
+        pushBreak();
+    }
+
+    // The countdown ticks locally; the overlay is only told whole seconds.
+    // The panel also comes off air by itself once the official clock runs, so
+    // a distracted operator cannot leave a countdown over live play.
+    $effect(() => {
+        if (!breakActive) return;
+
+        const intervalId = setInterval(() => {
+            nowMs = Date.now();
+
+            if (
+                gameResumedAtMs !== null &&
+                nowMs - gameResumedAtMs >= BREAK_AUTOHIDE_MS
+            ) {
+                endBreak();
+                return;
+            }
+
+            pushBreak();
+        }, 100);
+
+        return () => clearInterval(intervalId);
+    });
+
+    async function pollScore() {
+        // Never let a slow response push us past one request per second
+        if (isFetchingScore) return;
+
+        isFetchingScore = true;
+        try {
+            await fetchCurrentScore();
+        } finally {
+            isFetchingScore = false;
+        }
+    }
+
+    $effect(() => {
+        // The official scoreboard publishes the score only when the game clock
+        // resumes, so a paused clock cannot produce new data - in auto and
+        // manual alike. Period mode is the exception: the play button drives no
+        // clock there, so there is nothing meaningful to gate on.
+        const wantsApi = timeMode === "auto" || scoreMode === "auto";
+        const clockGatesPolling = timeMode !== "period";
+
+        const shouldPoll =
+            torneopalEnabled &&
+            wantsApi &&
+            !breakPausesPolling &&
+            (!clockGatesPolling || globalTimerActive);
+
+        if (!shouldPoll) {
+            isPollingScores = false;
+            pollError = "";
+            return;
+        }
+
+        isPollingScores = true;
+        pollScore();
+        const intervalId = setInterval(pollScore, POLL_INTERVAL_MS);
+
+        return () => {
+            clearInterval(intervalId);
+            isPollingScores = false;
+        };
+    });
 
     async function fetchCurrentScore() {
         if (!torneopalEnabled) {
@@ -192,60 +676,97 @@
         }
 
         try {
+            const startedAt = Date.now();
             const result = await torneopalApi.getScore(matchId);
-            if (result && result.score) {
-                apiScores = result.score;
+            const receivedAt = Date.now();
 
-                if (scoreMode === "auto") {
-                    if (
-                        result.score.live_A !== "" &&
-                        result.score.live_A !== null &&
-                        result.score.live_A !== undefined
-                    ) {
-                        const newHomeScore = parseInt(result.score.live_A);
-                        if (!isNaN(newHomeScore)) {
-                            homeTeamScore = newHomeScore;
-                        }
-                    }
+            lastRttMs = receivedAt - startedAt;
+            lastPollAt = receivedAt;
+            pollError = "";
 
-                    if (
-                        result.score.live_B !== "" &&
-                        result.score.live_B !== null &&
-                        result.score.live_B !== undefined
-                    ) {
-                        const newAwayScore = parseInt(result.score.live_B);
-                        if (!isNaN(newAwayScore)) {
-                            awayTeamScore = newAwayScore;
-                        }
-                    }
+            if (!result || !result.score) return;
 
-                    if (timeMode === "auto") {
-                        if (
-                            result.score.live_period &&
-                            result.score.live_period !== "-1" &&
-                            result.score.live_period !== ""
-                        ) {
-                            const newPeriod = parseInt(
-                                result.score.live_period,
-                            );
-                            if (!isNaN(newPeriod) && newPeriod > 0) {
-                                period = newPeriod;
-                            }
-                        }
+            const score = result.score;
+            apiScores = score;
 
-                        if (
-                            result.score.live_time_mmss &&
-                            result.score.live_time_mmss !== "" &&
-                            result.score.live_time_mmss !== "00:00"
-                        ) {
-                            time = result.score.live_time_mmss;
-                        }
-                    }
+            // live_period is "-1" when the match is not live
+            const isLive =
+                score.live_period !== undefined &&
+                score.live_period !== null &&
+                score.live_period !== "" &&
+                score.live_period !== "-1";
 
-                    await updateMatchData();
+            if (scoreMode === "auto") {
+                const newHomeScore = parseInt(score.live_A);
+                if (!isNaN(newHomeScore)) {
+                    homeTeamScore = newHomeScore;
+                }
+
+                const newAwayScore = parseInt(score.live_B);
+                if (!isNaN(newAwayScore)) {
+                    awayTeamScore = newAwayScore;
                 }
             }
+
+            if (timeMode === "auto" && isLive) {
+                const reportedPeriod = parseInt(score.live_period);
+                if (!isNaN(reportedPeriod) && reportedPeriod > 0) {
+                    apiPeriod = reportedPeriod;
+                }
+
+                const seconds = parseApiTime(score);
+                if (seconds !== null) {
+                    apiSeconds = seconds;
+                }
+
+                apiTimerOn = String(score.live_timer_on) === "1";
+
+                // Play has resumed - the break panel has to come off air
+                if (breakActive && apiTimerOn) {
+                    if (gameResumedAtMs === null) gameResumedAtMs = receivedAt;
+                } else {
+                    gameResumedAtMs = null;
+                }
+
+                // A period that has not started yet is shown as the previous
+                // one at its end time, not as the new one at 00:00
+                const previousPeriod = (apiPeriod ?? 1) - 1;
+                heldAtPeriodEnd =
+                    apiPeriod !== null &&
+                    apiPeriod > 1 &&
+                    !apiTimerOn &&
+                    apiSeconds === 0 &&
+                    periodLengths[previousPeriod] > 0;
+                if (apiPeriod !== null) {
+                    period = heldAtPeriodEnd ? previousPeriod : apiPeriod;
+                }
+
+                // Anchor for the exact clock
+                const anchorMs = parseTimestamp(score.live_timer_start);
+                const anchorSec = parseClockValue(score.live_timer_start_time);
+                if (anchorMs !== null && anchorSec !== null) {
+                    anchorWallMs = anchorMs;
+                    anchorSeconds = anchorSec;
+                    if (apiTimerOn && seconds !== null) {
+                        recordSkewSample(seconds, receivedAt, lastRttMs);
+                    }
+                } else {
+                    anchorWallMs = null;
+                    anchorSeconds = null;
+                }
+
+                apiReceivedAtMs = receivedAt;
+                nowMs = receivedAt;
+            }
+
+            if (timeMode === "auto") {
+                applyAutoClock();
+            } else if (scoreMode === "auto" && timeMode === "manual") {
+                // "period" mode has its own score effect
+                pushScoreIfChanged();
+            }
         } catch (error) {
+            pollError = error.message || "Score poll failed";
             console.error("Failed to fetch current score:", error);
         }
     }
@@ -390,6 +911,15 @@
     }
 
     function toggleGlobalTimer() {
+        // Auto mode: enable/disable the API feed without leaving auto mode.
+        // The polling effect depends on this flag, so re-enabling tears the
+        // interval down and fires a fresh getScore right away.
+        if (timeMode === "auto") {
+            globalTimerActive = !globalTimerActive;
+            lastAutoKey = "";
+            return;
+        }
+
         if (globalTimerActive) {
             stopGlobalTimer();
         } else {
@@ -472,6 +1002,9 @@
 
             if (timeMode === "manual") {
                 obsWebSocket.sendClockControl("clock_reset", { time });
+            } else if (timeMode === "auto") {
+                lastAutoKey = "";
+                applyAutoClock();
             }
 
             broadcastPenalties();
@@ -595,21 +1128,28 @@
             toggleGlobalTimer();
         }
 
-        if (timeMode === "manual" && $connectionStatus === "connected") {
-            const now = Date.now();
-            if (now - lastKeyPress < keyDebounceDelay) {
-                return;
-            }
+        if (event.code !== "ArrowUp" && event.code !== "ArrowDown") {
+            return;
+        }
 
-            if (event.code === "ArrowUp") {
-                event.preventDefault();
-                lastKeyPress = now;
-                obsWebSocket.sendClockControl("clock_adjust", { delta: 1 });
-            } else if (event.code === "ArrowDown") {
-                event.preventDefault();
-                lastKeyPress = now;
-                obsWebSocket.sendClockControl("clock_adjust", { delta: -1 });
-            }
+        if (timeMode === "period" || $connectionStatus !== "connected") {
+            return;
+        }
+
+        const now = Date.now();
+        if (now - lastKeyPress < keyDebounceDelay) {
+            return;
+        }
+
+        event.preventDefault();
+        lastKeyPress = now;
+        const delta = event.code === "ArrowUp" ? 1 : -1;
+
+        if (timeMode === "manual") {
+            obsWebSocket.sendClockControl("clock_adjust", { delta });
+        } else {
+            // Auto mode: nudge the drift, never the API time itself
+            adjustDrift(delta);
         }
     }
 
@@ -635,6 +1175,19 @@
         const savedTimeMode = localStorage.getItem("time-mode");
         if (savedTimeMode) {
             timeMode = savedTimeMode;
+        }
+
+        if (timeMode === "auto") {
+            // The API feed runs by default
+            globalTimerActive = true;
+        }
+
+        // Load drift correction for this match
+        const savedDrift = parseInt(
+            localStorage.getItem(`drift-offset-${matchId}`),
+        );
+        if (!isNaN(savedDrift)) {
+            driftOffset = savedDrift;
         }
 
         // Auto-connect to OBS WebSocket
@@ -685,6 +1238,18 @@
             {/if}
 
             <div class="header-actions">
+                {#if isPollingScores}
+                    <span
+                        class="poll-status"
+                        class:error={!!pollError}
+                        title={pollError
+                            ? `getScore failed: ${pollError}`
+                            : `Polling getScore ${POLL_INTERVAL_MS / 1000}s — last ${lastPollLabel}`}
+                    >
+                        <span class="poll-dot"></span>
+                        API
+                    </span>
+                {/if}
                 <button
                     class="obs-status"
                     class:connected={$connectionStatus === "connected"}
@@ -711,9 +1276,13 @@
                     class="play-btn"
                     class:running={globalTimerActive}
                     onclick={toggleGlobalTimer}
-                    title={globalTimerActive
-                        ? "Pause (Spacebar)"
-                        : "Play (Spacebar)"}
+                    title={timeMode === "auto"
+                        ? globalTimerActive
+                          ? "Pause — stop polling, freeze the overlay (Spacebar)"
+                          : "Play — poll the API again (Spacebar)"
+                        : globalTimerActive
+                          ? "Pause (Spacebar)"
+                          : "Play (Spacebar)"}
                 >
                     {globalTimerActive ? "⏸" : "▶"}
                 </button>
@@ -721,6 +1290,45 @@
                 <span class="timer-status">
                     {globalTimerActive ? "Running" : "Paused"}
                 </span>
+
+                {#if timeMode === "auto" && isPollingScores}
+                    <span
+                        class="api-timer"
+                        class:on={apiTimerOn}
+                        title={apiTimerTitle}
+                    >
+                        API {apiTimerOn ? "▶" : "⏸"}
+                    </span>
+
+                    <span
+                        class="api-timer"
+                        class:on={usingExactClock}
+                        class:warn={clockSkewMs !== null && !skewTrusted}
+                        title={syncTitle}
+                    >
+                        {syncLabel}
+                    </span>
+
+                    {#if heldAtPeriodEnd}
+                        <span
+                            class="api-timer hold"
+                            title={`Intermission — live_period is already ${apiPeriod}, holding period ${period} at its end until the clock starts`}
+                        >
+                            Break
+                        </span>
+                    {/if}
+
+                    {#if leadSeconds !== 0}
+                        <span
+                            class="api-timer warn"
+                            title="On air differs from the reported live_time — a missed poll, or the Latency trim"
+                        >
+                            {formatAbsoluteTime(apiSeconds)} → {formatAbsoluteTime(
+                                effectiveSeconds,
+                            )}
+                        </span>
+                    {/if}
+                {/if}
             </div>
 
             <div class="control-group">
@@ -801,6 +1409,46 @@
                     maxlength="4"
                 />
             </div>
+
+            {#if timeMode === "auto"}
+                <div class="control-group">
+                    <span class="field-label">Latency</span>
+                    <div class="drift-control" class:idle={!apiTimerOn}>
+                        <button
+                            class="drift-btn"
+                            onclick={(e) => {
+                                adjustDrift(-1);
+                                e.currentTarget.blur();
+                            }}
+                            disabled={driftOffset === 0}
+                            title="Latency −1 s (↓)"
+                        >−</button>
+                        <span
+                            class="drift-value"
+                            class:nonzero={driftOffset !== 0}
+                            title={driftTitle}
+                        >{formatDrift(driftOffset)}</span>
+                        <button
+                            class="drift-btn"
+                            onclick={(e) => {
+                                adjustDrift(1);
+                                e.currentTarget.blur();
+                            }}
+                            disabled={driftOffset === MAX_DRIFT}
+                            title="Latency +1 s (↑)"
+                        >+</button>
+                        <button
+                            class="drift-reset"
+                            onclick={(e) => {
+                                resetDrift();
+                                e.currentTarget.blur();
+                            }}
+                            disabled={driftOffset === 0}
+                            title="Reset drift"
+                        >⟲</button>
+                    </div>
+                </div>
+            {/if}
 
             <div class="control-group">
                 <div class="score-inline">
@@ -1027,7 +1675,105 @@
             </div>
         </div>
 
-        <!-- Row 4: Shootout (only in period 5 / RL) -->
+        <!-- Row 4: Intermission panel -->
+        <div class="control-row row-break" class:active={breakActive}>
+            <div class="control-group">
+                <button
+                    class="break-btn"
+                    class:on={breakActive && breakKind === "intermission"}
+                    class:suggested={!breakActive && heldAtPeriodEnd}
+                    onclick={() => toggleBreak("intermission")}
+                    disabled={$connectionStatus !== "connected"}
+                    title={breakActive && breakKind === "intermission"
+                        ? "Take the panel off air"
+                        : `Put "${formatPeriodLabel(period)} ERÄTAUKO" on air`}
+                >
+                    Intermission
+                </button>
+
+                <button
+                    class="break-btn"
+                    class:on={breakActive && breakKind === "powerbreak"}
+                    onclick={() => toggleBreak("powerbreak")}
+                    disabled={$connectionStatus !== "connected"}
+                    title={breakActive && breakKind === "powerbreak"
+                        ? "Take the panel off air"
+                        : `Put "${formatPeriodLabel(period)} POWER BREAK" on air (${POWER_BREAK_SECONDS}s)`}
+                >
+                    Power break
+                </button>
+
+                <input
+                    type="text"
+                    class="time-input"
+                    bind:value={breakInput}
+                    onfocus={(e) => {
+                        breakInputActive = true;
+                        if (!breakInput) {
+                            breakInput = formatAbsoluteTime(
+                                breakActive ? breakRemaining : DEFAULT_BREAK_SECONDS,
+                            ).replace(":", "");
+                        }
+                        // currentTarget is nulled once the handler returns, so
+                        // the deferred select needs its own reference
+                        const field = e.currentTarget;
+                        setTimeout(() => field.select(), 0);
+                    }}
+                    onclick={(e) => e.currentTarget.select()}
+                    oninput={(e) => {
+                        breakInput = e.currentTarget.value
+                            .replace(/\D/g, "")
+                            .substring(0, 4);
+                    }}
+                    onblur={() => {
+                        breakInput = "";
+                        breakInputActive = false;
+                    }}
+                    onkeydown={(e) => {
+                        if (e.key === "Enter") {
+                            applyBreakInput();
+                            e.currentTarget.blur();
+                        }
+                        if (e.key === "Escape") {
+                            breakInput = "";
+                            breakInputActive = false;
+                            e.currentTarget.blur();
+                        }
+                    }}
+                    disabled={$connectionStatus !== "connected"}
+                    placeholder={breakInputActive
+                        ? "MMSS"
+                        : formatAbsoluteTime(
+                              breakActive ? breakRemaining : DEFAULT_BREAK_SECONDS,
+                          )}
+                    maxlength="4"
+                />
+
+                {#if breakActive}
+                    <span class="break-status" class:ending={breakRemaining === 0}>
+                        {breakRemaining === 0
+                            ? "Break over"
+                            : formatAbsoluteTime(breakRemaining)}
+                    </span>
+
+                    <span class="break-label-preview">{breakLabel}</span>
+
+                    {#if gameResumedAtMs !== null}
+                        <span class="break-resumed">
+                            Game running — panel closing
+                        </span>
+                    {:else if breakPausesPolling}
+                        <span class="break-note">
+                            Polling paused until {BREAK_POLL_RESUME_SEC}s left
+                        </span>
+                    {/if}
+                {:else if heldAtPeriodEnd}
+                    <span class="break-note">Intermission detected</span>
+                {/if}
+            </div>
+        </div>
+
+        <!-- Row 5: Shootout (only in period 5 / RL) -->
         {#if period === 5}
             <div class="control-row row-shootout">
                 <div class="shootout-column">
@@ -1218,6 +1964,50 @@
         opacity: 0.6;
     }
 
+    /* Score poll indicator */
+    .poll-status {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        background: rgba(33, 150, 243, 0.15);
+        border: 1px solid #2196f3;
+        color: #2196f3;
+        cursor: help;
+    }
+
+    .poll-status.error {
+        background: rgba(244, 67, 54, 0.15);
+        border-color: #f44336;
+        color: #f44336;
+    }
+
+    .poll-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        animation: poll-pulse 1s ease-in-out infinite;
+    }
+
+    .poll-status.error .poll-dot {
+        animation: none;
+    }
+
+    @keyframes poll-pulse {
+        0%,
+        100% {
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.2;
+        }
+    }
+
     /* Control Rows */
     .control-row {
         background: #1e1e1e;
@@ -1290,6 +2080,118 @@
 
     .row-main.active .timer-status {
         color: #4caf50;
+    }
+
+    /* Intermission panel row */
+    .row-break.active {
+        border-color: #7e57c2;
+        background: linear-gradient(
+            135deg,
+            #1e1e1e 0%,
+            rgba(126, 87, 194, 0.12) 100%
+        );
+    }
+
+    .break-btn {
+        height: 36px;
+        padding: 0 14px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        color: #ccc;
+        font-size: 13px;
+        font-weight: bold;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.2s;
+    }
+
+    .break-btn:hover:not(:disabled) {
+        background: #333;
+        border-color: #666;
+        color: #fff;
+    }
+
+    .break-btn.on {
+        background: #542c8c;
+        border-color: #7e57c2;
+        color: #fff;
+    }
+
+    .break-btn.suggested {
+        border-color: #ffc107;
+        color: #ffc107;
+    }
+
+    .break-btn:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .break-status {
+        font-size: 15px;
+        font-weight: bold;
+        color: #b39ddb;
+        font-variant-numeric: tabular-nums;
+        min-width: 55px;
+    }
+
+    .break-status.ending {
+        color: #ffc107;
+    }
+
+    .break-note {
+        font-size: 11px;
+        color: #777;
+    }
+
+    .break-label-preview {
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        color: #b39ddb;
+        padding: 3px 7px;
+        border-radius: 4px;
+        background: rgba(84, 44, 140, 0.35);
+        white-space: nowrap;
+    }
+
+    .break-resumed {
+        font-size: 11px;
+        font-weight: bold;
+        color: #f44336;
+    }
+
+    /* Official scoreboard clock state (auto mode only) */
+    .api-timer {
+        padding: 3px 7px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: bold;
+        letter-spacing: 0.5px;
+        white-space: nowrap;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        color: #777;
+        cursor: help;
+    }
+
+    .api-timer.on {
+        background: rgba(76, 175, 80, 0.15);
+        border-color: #4caf50;
+        color: #4caf50;
+    }
+
+    .api-timer.warn {
+        background: rgba(244, 67, 54, 0.15);
+        border-color: #f44336;
+        color: #f44336;
+    }
+
+    .api-timer.hold {
+        background: rgba(255, 193, 7, 0.15);
+        border-color: #ffc107;
+        color: #ffc107;
     }
 
     .control-group + .control-group {
@@ -1370,6 +2272,73 @@
         border-color: #333;
         color: #666;
         cursor: not-allowed;
+    }
+
+    /* Drift correction (auto mode only) */
+    .drift-control {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        height: 36px;
+        background: #2a2a2a;
+        border: 1px solid #444;
+        border-radius: 4px;
+        padding: 0 3px;
+        box-sizing: border-box;
+    }
+
+    .drift-btn,
+    .drift-reset {
+        width: 24px;
+        height: 28px;
+        background: transparent;
+        border: none;
+        border-radius: 3px;
+        color: #ccc;
+        font-size: 14px;
+        font-weight: bold;
+        cursor: pointer;
+        padding: 0;
+        line-height: 1;
+    }
+
+    .drift-btn:hover:not(:disabled),
+    .drift-reset:hover:not(:disabled) {
+        background: #3a3a3a;
+        color: #fff;
+    }
+
+    .drift-btn:disabled {
+        opacity: 0.3;
+        cursor: default;
+    }
+
+    /* The correction only applies while the official clock is running */
+    .drift-control.idle {
+        opacity: 0.5;
+    }
+
+    .drift-reset {
+        font-size: 12px;
+        color: #777;
+    }
+
+    .drift-reset:disabled {
+        opacity: 0.3;
+        cursor: default;
+    }
+
+    .drift-value {
+        min-width: 34px;
+        text-align: center;
+        font-size: 13px;
+        font-weight: bold;
+        color: #666;
+        cursor: help;
+    }
+
+    .drift-value.nonzero {
+        color: #ffc107;
     }
 
     /* Inline Score */

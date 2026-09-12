@@ -1,11 +1,12 @@
 <script>
     import { onMount } from "svelte";
-    import { slide } from "svelte/transition";
+    import { fade, slide } from "svelte/transition";
     import {
         obsWebSocket,
         connectionStatus,
         matchData,
     } from "./obsWebSocket.js";
+    import InssiDivariLogo from "./InssiDivariLogo.svelte";
 
     let isConnected = $state(false);
     let retryCount = $state(0);
@@ -37,6 +38,19 @@
     // Shootout state
     let homeShootout = $state([]);
     let awayShootout = $state([]);
+
+    // Intermission panel. The operator owns the countdown, so this view only
+    // renders what it is handed - same contract as the auto-mode clock.
+    let breakActive = $state(false);
+    let breakRemaining = $state(0);
+    let breakLabel = $state("ERÄTAUKO");
+
+    let breakTime = $derived.by(() => {
+        const total = Math.max(0, breakRemaining);
+        const minutes = Math.floor(total / 60);
+        const seconds = total % 60;
+        return `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
+    });
 
     // Derived display time that handles different modes and periods
     let displayTime = $derived.by(() => {
@@ -90,6 +104,9 @@
                         case "ShootoutUpdate":
                             handleShootoutUpdate(eventData);
                             break;
+                        case "BreakUpdate":
+                            handleBreakUpdate(eventData);
+                            break;
                         case "MatchUpdate":
                             // Legacy support - can be removed later
                             console.log(
@@ -117,7 +134,8 @@
         if (
             action === "clock_start" ||
             action === "clock_pause" ||
-            action === "period_change"
+            action === "period_change" ||
+            action === "clock_set"
         ) {
             if (data.homeScore !== undefined) homeScore = data.homeScore;
             if (data.awayScore !== undefined) awayScore = data.awayScore;
@@ -127,7 +145,8 @@
         if (
             action === "clock_start" ||
             action === "clock_pause" ||
-            action === "period_change"
+            action === "period_change" ||
+            action === "clock_set"
         ) {
             if (data.period !== undefined && data.period !== internalPeriod) {
                 handlePeriodChange(data.period, data.periodLength || internalPeriodLength);
@@ -146,6 +165,9 @@
                 break;
             case "clock_reset":
                 resetInternalClock(data.time);
+                break;
+            case "clock_set":
+                setInternalClock(data);
                 break;
             case "period_change":
                 handlePeriodChange(data.period, data.periodLength);
@@ -175,6 +197,14 @@
     function handleShootoutUpdate(data) {
         if (Array.isArray(data.homeAttempts)) homeShootout = data.homeAttempts;
         if (Array.isArray(data.awayAttempts)) awayShootout = data.awayAttempts;
+    }
+
+    function handleBreakUpdate(data) {
+        breakActive = !!data.active;
+        if (typeof data.remainingSeconds === "number") {
+            breakRemaining = data.remainingSeconds;
+        }
+        if (data.label) breakLabel = data.label;
     }
 
     function getAbsoluteSeconds() {
@@ -246,16 +276,34 @@
         }
     }
 
-    function pauseInternalClock() {
+    function stopTicking() {
         clockRunning = false;
         if (clockInterval) {
             clearInterval(clockInterval);
             clockInterval = null;
         }
         accumulatedTime = 0;
+    }
+
+    function pauseInternalClock() {
+        stopTicking();
 
         // Report current time back to operator
         sendClockSync();
+    }
+
+    // Auto mode: the operator polls the API once per second and sends the
+    // playing time as an absolute value, so the clock does not tick locally
+    // and may jump backwards. No clock_sync here - the API is the authority.
+    function setInternalClock(data) {
+        stopTicking();
+
+        if (typeof data.seconds === "number") {
+            internalSeconds = Math.max(0, data.seconds);
+        } else if (data.time) {
+            const [minutes, seconds] = data.time.split(":").map(Number);
+            internalSeconds = minutes * 60 + (seconds || 0);
+        }
     }
 
     function sendClockSync() {
@@ -316,7 +364,47 @@
     });
 </script>
 
-<div class="scoreboard">
+{#if breakActive}
+    <!--
+      Rebuilt from inssidivari_eratauko_planssi.png rather than using it:
+      bar 1170x107 at 1920x1080, fill #542c8c, 3px #7e66bd border, 10px radius,
+      all measured off the asset. The wordmark is real text, so it can say
+      something other than ERÄTAUKO without a new graphic.
+    -->
+    <div class="break-panel" transition:fade={{ duration: 200 }}>
+        <div class="break-combo">
+            {#if homeTeamLogo}
+                <img class="break-logo" src={homeTeamLogo} alt={homeTeamName} />
+            {:else}
+                <span class="break-team">{homeTeamName}</span>
+            {/if}
+
+            <div class="break-score-box">
+                <span class="break-team-score">{homeScore}</span>
+                <span class="break-divider">-</span>
+                <span class="break-team-score">{awayScore}</span>
+            </div>
+
+            {#if awayTeamLogo}
+                <img class="break-logo" src={awayTeamLogo} alt={awayTeamName} />
+            {:else}
+                <span class="break-team">{awayTeamName}</span>
+            {/if}
+        </div>
+
+        <div class="break-bar">
+            <div class="break-brand">
+                <InssiDivariLogo />
+            </div>
+
+            <div class="break-countdown">{breakTime}</div>
+
+            <div class="break-label">{breakLabel}</div>
+        </div>
+    </div>
+{/if}
+
+<div class="scoreboard" class:hidden={breakActive}>
     {#if $connectionStatus === "connected"}
         <!-- Home team logo on transparent background -->
 
@@ -539,6 +627,117 @@
 
     .time {
         font-variant-numeric: tabular-nums;
+    }
+
+    .scoreboard.hidden {
+        display: none;
+    }
+
+    /* Intermission panel, measured off the broadcast asset */
+    @font-face {
+        font-family: "Nineties Headliner";
+        src:
+            url("/ninetiesheadliner-regular-webfont.woff2") format("woff2"),
+            url("/ninetiesheadliner-regular-webfont.woff") format("woff");
+        font-weight: normal;
+        font-display: swap;
+    }
+
+    .break-panel {
+        position: fixed;
+        inset: 0;
+        font-family: "Arial Black", Arial, sans-serif;
+        color: #fff;
+        user-select: none;
+        cursor: none;
+    }
+
+    .break-bar {
+        position: absolute;
+        left: 19.58%; /* 376/1920 */
+        top: 78.06%; /* 843/1080 */
+        width: 60.94%; /* 1170/1920 */
+        height: 9.91%; /* 107/1080 */
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        background: #542c8c;
+        border: 0.26vw solid #7e66bd; /* 5px */
+        border-radius: 0.52vw; /* 10px */
+        padding: 0 2.4%; /* 28/1170 */
+    }
+
+    .break-brand {
+        width: 22.9%; /* 268/1170 */
+        height: 70%;
+        flex-shrink: 0;
+    }
+
+    .break-label {
+        flex-shrink: 0;
+        margin-left: auto;
+        font-family: "Nineties Headliner", "Arial Black", Arial, sans-serif;
+        font-size: 1.9vw;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+    }
+
+    /* Score combo sits above the bar, mirroring the scoreboard's treatment */
+    .break-combo {
+        position: absolute;
+        bottom: 22.7%;
+        left: 0;
+        right: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 0.8vw;
+    }
+
+    .break-logo {
+        width: 3.75vw;
+        height: 3.75vw;
+        object-fit: contain;
+        flex-shrink: 0;
+        filter: drop-shadow(4px 8px 2px rgba(72, 61, 139, 0.3));
+    }
+
+    .break-team {
+        font-size: 1.25vw;
+        color: #333;
+        white-space: nowrap;
+    }
+
+    .break-score-box {
+        display: flex;
+        align-items: center;
+        gap: 0.42vw;
+        background: #5b4b99;
+        padding: 0.31vw 0.63vw;
+        border-radius: 0.31vw;
+    }
+
+    .break-team-score {
+        font-size: 1.5vw;
+        min-width: 1.88vw;
+        text-align: center;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .break-divider {
+        font-size: 1.25vw;
+    }
+
+    /* Centred in the bar regardless of what flanks it */
+    .break-countdown {
+        position: absolute;
+        left: 0;
+        right: 0;
+        text-align: center;
+        font-size: 3.4vw;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+        pointer-events: none;
     }
 
     .connecting {

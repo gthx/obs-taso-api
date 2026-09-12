@@ -321,6 +321,24 @@ class OBSWebSocketClient {
     }
   }
 
+  async sendBreakUpdate(active, remainingSeconds, label) {
+    try {
+      await this.sendRequest("BroadcastCustomEvent", {
+        eventData: {
+          eventName: "BreakUpdate",
+          eventData: {
+            active,
+            remainingSeconds,
+            label,
+            timestamp: Date.now(),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Failed to send break update:", error);
+    }
+  }
+
   async sendMatchInfo(matchInfo) {
     try {
       await this.sendRequest("BroadcastCustomEvent", {
