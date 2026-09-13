@@ -12,14 +12,29 @@
     let retryCount = $state(0);
     const maxRetries = 10;
 
-    // Internal clock state
+    // Game clock. The overlay owns the clock on air: it is handed a state
+    // transition plus an anchor - the playing time at the instant the message
+    // was sent - and works out the seconds from its own wall clock. Nothing
+    // here depends on a message arriving on the second, which matters because
+    // the admin page is an ordinary tab whose timers are throttled the moment
+    // it goes behind another window. Nothing throttles a browser source.
     let internalSeconds = $state(0);
     let internalPeriod = $state(1);
     let internalPeriodLength = 1200;
     let clockRunning = $state(false);
     let clockInterval = null;
-    let lastTick = 0;
-    let accumulatedTime = 0;
+
+    // The anchor: playing time (fractional) at a known instant of this
+    // machine's clock. The sender's wall time is never used - the two pages
+    // may be on different machines - so the anchor is re-taken on arrival.
+    let anchorWallMs = 0;
+    let anchorSeconds = 0;
+
+    // An anchor that agrees with what is already on air is ignored rather
+    // than re-applied: the resync repeats while the clock runs, and
+    // re-anchoring on every pulse would nudge the display.
+    const ANCHOR_TOLERANCE_MS = 250;
+    const CLOCK_TICK_MS = 50;
 
     // Match info state
     let homeScore = $state(0);
@@ -173,6 +188,12 @@
                     }
                 }
             });
+
+            // Ask the operator for everything we missed. A browser source can
+            // be restarted at any moment, and waiting for the next resync
+            // means waiting on a timer in a tab that may be throttled - an
+            // incoming socket message is not.
+            await obsWebSocket.sendClockControl("clock_request");
         } catch (error) {
             console.error("Failed to connect:", error);
 
@@ -189,6 +210,7 @@
         // Update score+period only from state-carrying events
         if (
             action === "clock_start" ||
+            action === "clock_run" ||
             action === "clock_pause" ||
             action === "period_change" ||
             action === "clock_set"
@@ -200,6 +222,7 @@
         // Update period from state-carrying events
         if (
             action === "clock_start" ||
+            action === "clock_run" ||
             action === "clock_pause" ||
             action === "period_change" ||
             action === "clock_set"
@@ -213,8 +236,11 @@
             case "clock_start":
                 startInternalClock(data.time);
                 break;
+            case "clock_run":
+                runInternalClock(data.seconds);
+                break;
             case "clock_pause":
-                pauseInternalClock();
+                pauseInternalClock(data.seconds);
                 break;
             case "clock_adjust":
                 adjustInternalClock(data.delta);
@@ -304,53 +330,46 @@
     function handlePeriodChange(newPeriod, periodLength) {
         if (newPeriod != internalPeriod) {
             internalPeriod = newPeriod;
-            internalSeconds = 0;
             internalPeriodLength = periodLength;
+            stopTicking();
+            setAnchor(0);
         }
     }
 
-    function startInternalClock(time) {
-        // Only update time/period if explicitly provided (not on resume)
-        if (time) {
-            // Convert time string to seconds
-            const [minutes, seconds] = time.split(":").map(Number);
-            internalSeconds = minutes * 60 + seconds;
-        }
-
-        if (clockInterval) return; // Already running
-
-        clockRunning = true;
-        lastTick = Date.now();
-        accumulatedTime = 0;
-
-        // Use 60fps (16.67ms) for smooth accumulation
-        clockInterval = setInterval(handleClockTick, 16);
+    function parseTime(value) {
+        const [minutes, seconds] = String(value).split(":").map(Number);
+        return (minutes || 0) * 60 + (seconds || 0);
     }
 
-    function handleClockTick() {
-        if (!clockRunning) return;
+    function clampSeconds(seconds) {
+        // The shootout has no clock of its own
+        if (internalPeriod === 5) return 0;
 
-        // Don't increment time during shootout (period 5)
-        if (internalPeriod === 5) return;
+        const floored = Math.max(0, seconds);
+        return internalPeriodLength > 0
+            ? Math.min(floored, internalPeriodLength)
+            : floored;
+    }
 
-        const now = Date.now();
-        const diff = now - lastTick;
-        lastTick = now;
-        accumulatedTime += diff;
+    // Playing time the current anchor implies at a given instant
+    function clockSecondsAt(nowMs) {
+        if (!clockRunning || internalPeriod === 5) return anchorSeconds;
+        return anchorSeconds + (nowMs - anchorWallMs) / 1000;
+    }
 
-        // Update internal seconds when 1000ms have accumulated
-        if (accumulatedTime >= 1000) {
-            accumulatedTime -= 1000; // Keep remainder for next second
-            internalSeconds++;
+    function setAnchor(seconds, nowMs = Date.now()) {
+        anchorSeconds = seconds;
+        anchorWallMs = nowMs;
+        renderClock(nowMs);
+    }
 
-            // Different max times based on period
-            const maxSeconds = internalPeriodLength;
+    function renderClock(nowMs = Date.now()) {
+        internalSeconds = Math.floor(clampSeconds(clockSecondsAt(nowMs)));
+    }
 
-            // Stop at max time for current period
-            if (internalSeconds >= maxSeconds) {
-                internalSeconds = maxSeconds;
-            }
-        }
+    function startTicking() {
+        if (clockInterval) return;
+        clockInterval = setInterval(() => renderClock(), CLOCK_TICK_MS);
     }
 
     function stopTicking() {
@@ -359,27 +378,71 @@
             clearInterval(clockInterval);
             clockInterval = null;
         }
-        accumulatedTime = 0;
     }
 
-    function pauseInternalClock() {
+    // Manual mode: resume from where we are, or from the time handed over.
+    function startInternalClock(time) {
+        const now = Date.now();
+        const seconds = time ? parseTime(time) : clockSecondsAt(now);
+
+        clockRunning = true;
+        setAnchor(seconds, now);
+        startTicking();
+    }
+
+    // Auto mode: "the clock is running and the playing time was S when I sent
+    // this". S carries its fraction, so the second turns over on air where the
+    // official clock turns it over rather than wherever the message landed.
+    function runInternalClock(seconds) {
+        if (typeof seconds !== "number") {
+            startInternalClock(null);
+            return;
+        }
+
+        const now = Date.now();
+        const showing = clockSecondsAt(now);
+        const wasRunning = clockRunning;
+
+        clockRunning = true;
+        startTicking();
+
+        if (
+            wasRunning &&
+            Math.abs(showing - seconds) * 1000 <= ANCHOR_TOLERANCE_MS
+        ) {
+            return; // already showing it - leave the anchor alone
+        }
+
+        setAnchor(seconds, now);
+    }
+
+    // A whistle reaches us one poll late, so the value handed over here can be
+    // behind what is on air. It is the official time and it wins: the clock
+    // snaps back rather than holding a second the hall's board never showed.
+    function pauseInternalClock(seconds) {
+        const now = Date.now();
+        const own = clockSecondsAt(now);
         stopTicking();
 
-        // Report current time back to operator
+        if (typeof seconds === "number") {
+            setAnchor(seconds, now);
+            return;
+        }
+
+        // A sender that named the time already knows it; one that did not is
+        // asking for ours back.
+        setAnchor(own, now);
         sendClockSync();
     }
 
-    // Auto mode: the operator polls the API once per second and sends the
-    // playing time as an absolute value, so the clock does not tick locally
-    // and may jump backwards. No clock_sync here - the API is the authority.
+    // Legacy absolute set from older admin builds: stop and show the value.
     function setInternalClock(data) {
         stopTicking();
 
         if (typeof data.seconds === "number") {
-            internalSeconds = Math.max(0, data.seconds);
+            setAnchor(Math.max(0, data.seconds));
         } else if (data.time) {
-            const [minutes, seconds] = data.time.split(":").map(Number);
-            internalSeconds = minutes * 60 + (seconds || 0);
+            setAnchor(parseTime(data.time));
         }
     }
 
@@ -392,42 +455,14 @@
     }
 
     function adjustInternalClock(delta) {
-        accumulatedTime = 0;
-        internalSeconds += delta;
-
-        // Don't go below 0:00
-        if (internalSeconds < 0) {
-            internalSeconds = 0;
-        }
-
-        // Different max times based on period
-        let maxSeconds;
-        if (internalPeriod === 4) {
-            maxSeconds = 300; // 5:00 for extra time (JA)
-        } else if (internalPeriod === 5) {
-            maxSeconds = 0; // No time counting for shootout
-        } else {
-            maxSeconds = 1200; // 20:00 for regular periods (1-3)
-        }
-
-        if (internalSeconds > maxSeconds) {
-            internalSeconds = maxSeconds;
-        }
+        const now = Date.now();
+        setAnchor(clampSeconds(clockSecondsAt(now) + delta), now);
         sendClockSync();
     }
 
+    // Moves the anchor; a running clock carries on from the new value.
     function resetInternalClock(time) {
-        if (time) {
-            // Convert time string to seconds
-            const [minutes, seconds] = time.split(":").map(Number);
-            internalSeconds = minutes * 60 + seconds;
-        }
-
-        // If clock was running, restart it with new time
-        if (clockRunning && clockInterval) {
-            pauseInternalClock();
-            startInternalClock(time);
-        }
+        if (time) setAnchor(parseTime(time));
         sendClockSync();
     }
 
@@ -436,7 +471,7 @@
 
         return () => {
             obsWebSocket.disconnect();
-            pauseInternalClock();
+            stopTicking();
         };
     });
 </script>

@@ -71,12 +71,14 @@
     // puts "3rd 00:00" on air for the whole intermission, so the previous
     // period is held at its end time until the clock actually starts.
     let heldAtPeriodEnd = $state(false);
-    let lastAutoKey = "";
 
     // Manual trim on top of the computed clock (seconds). Auto mode only -
-    // the manual clock is never affected by this. Latency can only make us
-    // late, never early, so the correction is forward-only.
-    const MAX_DRIFT = 5;
+    // the manual clock is never affected by this. The operator is in the hall
+    // with the official board in sight and the broadcast on the hall screen
+    // next to it, and lines the two up by eye: positive runs the clock on air
+    // ahead, which is what covers the video delay between OBS and that screen;
+    // negative holds it back for everything that puts us in front of the board.
+    const MAX_DRIFT = 10;
     let driftOffset = $state(0);
 
     // Exact clock. getScore reports when the running clock was started
@@ -111,12 +113,20 @@
             anchorSeconds !== null,
     );
 
-    // Whole seconds since the reading we are bounded by arrived
-    let sampleAgeSeconds = $derived(
+    // How long ago the reading we are bounded by arrived
+    let sampleAge = $derived(
         apiReceivedAtMs === null
             ? 0
-            : Math.floor(Math.max(0, nowMs - apiReceivedAtMs) / 1000),
+            : Math.max(0, nowMs - apiReceivedAtMs) / 1000,
     );
+
+    // Phase source when there is no trusted server anchor: the first reading
+    // of this running stretch, free-run from there. Without it the fraction
+    // would come from whichever poll last landed, and since polls drift
+    // against the official second boundary it would move by up to a second
+    // between them - which the overlay would faithfully re-anchor to.
+    let freeAnchorWallMs = $state(/** @type {number | null} */ (null));
+    let freeAnchorSeconds = $state(/** @type {number | null} */ (null));
 
     function clampToPeriod(seconds) {
         const periodLength = periodLengths[period] || 0;
@@ -124,36 +134,64 @@
         return periodLength > 0 ? Math.min(floored, periodLength) : floored;
     }
 
-    // The time actually put on air. A stopped clock reports an exact value
-    // that is not going stale, so there is nothing to correct while it is off.
-    let effectiveSeconds = $derived.by(() => {
+    // Playing time as a continuous value, from whichever anchor we have. The
+    // phase belongs to the anchor and holds for the whole running stretch, so
+    // the second turns over at the same point in every wall-clock second.
+    let smoothSeconds = $derived.by(() => {
+        if (usingExactClock) {
+            return anchorSeconds + (nowMs + clockSkewMs - anchorWallMs) / 1000;
+        }
+        if (freeAnchorWallMs !== null && freeAnchorSeconds !== null) {
+            return freeAnchorSeconds + (nowMs - freeAnchorWallMs) / 1000;
+        }
+        return null;
+    });
+
+    // The playing time at this instant, fraction included. This is the value
+    // handed to the overlay: the overlay runs the clock on air from it, so it
+    // needs the sub-second phase to turn the second over where the official
+    // clock turns it over rather than whenever a message happens to arrive.
+    // A stopped clock reports an exact value that is not going stale, so there
+    // is nothing to correct while it is off.
+    let effectiveSecondsExact = $derived.by(() => {
         if (heldAtPeriodEnd) return periodLengths[period] || 0;
         if (!apiTimerOn) return apiSeconds;
 
-        if (usingExactClock) {
-            const elapsedMs = nowMs + clockSkewMs - anchorWallMs;
-            const computed = anchorSeconds + Math.floor(elapsedMs / 1000);
-
-            // live_time, live_timer_start and live_timer_start_time all carry
-            // one-second resolution, so the API exposes no sub-second phase at
-            // all: anticipating the boundary can only put a second on air that
-            // the official display has not reached yet. The computation fills
-            // gaps between polls, but never leads what the server reported.
-            const bounded =
-                apiSeconds === null
-                    ? computed
-                    : Math.min(
-                          Math.max(computed, apiSeconds),
-                          apiSeconds + sampleAgeSeconds,
-                      );
-
-            return clampToPeriod(bounded + driftOffset);
+        if (smoothSeconds === null) {
+            // Nothing to run from yet: the reported time as it stands
+            if (apiSeconds === null) return null;
+            return clampToPeriod(apiSeconds + driftOffset);
         }
 
-        // No usable anchor: fall back to the reported time
-        if (apiSeconds === null) return null;
-        return clampToPeriod(apiSeconds + driftOffset);
+        if (apiSeconds === null) return clampToPeriod(smoothSeconds);
+
+        // live_time is floored by the server, so a reading of N taken `age`
+        // seconds ago puts the official clock somewhere in [N + age, N + 1 +
+        // age) now: a one-second band sliding at real time. Inside it the
+        // free-running value is left exactly as it is - that is where the
+        // phase on air comes from - and it is only pulled back when it leaves
+        // the band, which takes a real disagreement (the official clock
+        // rewound, a period reset) rather than a fraction of a second.
+        // Pinning it to N instead would put the second boundary wherever the
+        // poll happened to land, which is the one thing the anchor exists to
+        // avoid.
+        const earliest = apiSeconds + sampleAge;
+        const bounded = Math.min(
+            Math.max(smoothSeconds, earliest),
+            earliest + 1,
+        );
+
+        // The operator's own trim sits outside the band on purpose: it is
+        // lining the clock on air up against the board in the hall, which is
+        // a different question from what the API last reported.
+        return clampToPeriod(bounded + driftOffset);
     });
+
+    let effectiveSeconds = $derived(
+        effectiveSecondsExact === null
+            ? null
+            : Math.floor(effectiveSecondsExact),
+    );
 
     let lastPollLabel = $derived(
         lastPollAt ? new Date(lastPollAt).toLocaleTimeString() : "never",
@@ -241,6 +279,27 @@
     let overlayAwayScore = $state(0);
     let overlayPeriod = $state(1);
 
+    // ...and the clock anchor it was last given, so the same arithmetic it
+    // runs can be repeated here to see whether it still agrees with us.
+    let overlayClockRunning = false;
+    let overlayClockSeconds = /** @type {number | null} */ (null);
+    let overlayClockSentAtMs = 0;
+
+    // How often the anchor is repeated even when nothing changed. This is the
+    // only thing an overlay that reloaded mid-match has to wait for, and the
+    // only clock traffic during a long stoppage.
+    const CLOCK_RESYNC_MS = 5000;
+    // How far the overlay may be from our own reading before it is re-anchored.
+    // Matches the tolerance the overlay applies to an incoming anchor, so a
+    // resync that agrees with it does not nudge what is on air.
+    const CLOCK_RESYNC_TOLERANCE = 0.25;
+    // A running clock is never walked backwards by less than this. The skew
+    // estimate is a maximum over a sliding window of samples, so it wobbles by
+    // a fraction of a second as samples age out - enough, once the phase is
+    // live, to step the clock on air back over a second boundary. A real
+    // correction is a whole second or more and still gets through.
+    const MAX_SILENT_REWIND = 1;
+
     // Dirty flag: local state differs from overlay
     let scoreDirty = $derived(
         homeTeamScore !== overlayHomeScore ||
@@ -279,6 +338,15 @@
         overlayHomeScore = homeTeamScore;
         overlayAwayScore = awayTeamScore;
         overlayPeriod = period;
+
+        // A period change resets the overlay's clock to 00:00 and stops it.
+        // Mirror that here, or the next push would compare against an anchor
+        // the overlay has already thrown away.
+        if (action === "period_change") {
+            overlayClockRunning = false;
+            overlayClockSeconds = 0;
+            overlayClockSentAtMs = Date.now();
+        }
     }
 
     // In "period" mode there is no clock, so there are no clock events to carry
@@ -309,6 +377,19 @@
         }
     }
 
+    // An overlay that has just loaded asks for the state it missed. Answering
+    // over the socket works even with this tab in the background, which is
+    // exactly when the overlay would otherwise be waiting on a throttled
+    // timer for the next resync.
+    let lastClockRequestAt = 0;
+    function handleClockRequest() {
+        const now = Date.now();
+        if (now - lastClockRequestAt < 2000) return; // several sources, one answer
+        lastClockRequestAt = now;
+        invalidateOverlayClock();
+        forceRefreshMatchInfo();
+    }
+
     // Change period directly (from dropdown)
     function changePeriod(newPeriod) {
         period = newPeriod;
@@ -331,8 +412,12 @@
             obsWebSocket.addEventListener("CustomEvent", (event) => {
                 if (event.eventData) {
                     const { eventName, eventData } = event.eventData;
-                    if (eventName === "ClockControl" && eventData.action === "clock_sync") {
+                    if (eventName !== "ClockControl") return;
+
+                    if (eventData.action === "clock_sync") {
                         handleClockSync(eventData);
+                    } else if (eventData.action === "clock_request") {
+                        handleClockRequest();
                     }
                 }
             });
@@ -364,8 +449,11 @@
             globalTimerActive = true;
         } else if (previous === "auto" && mode !== "auto") {
             globalTimerActive = false;
+            // The overlay is running its own clock from the last anchor, so
+            // leaving auto has to stop it explicitly.
+            pauseOverlayClock();
         }
-        lastAutoKey = "";
+        invalidateOverlayClock();
 
         updateMatchData();
     }
@@ -376,11 +464,16 @@
         if (matchId) {
             localStorage.setItem(`drift-offset-${matchId}`, String(value));
         }
-        applyAutoClock();
+        // Forced: a trim the operator just made is deliberate, so it goes out
+        // whole even when it walks the clock backwards - the guard against
+        // small rewinds is there for the estimator's wobble, not for this.
+        applyAutoClock(true);
     }
 
     function adjustDrift(delta) {
-        setDrift(Math.min(MAX_DRIFT, Math.max(0, driftOffset + delta)));
+        setDrift(
+            Math.min(MAX_DRIFT, Math.max(-MAX_DRIFT, driftOffset + delta)),
+        );
     }
 
     function resetDrift() {
@@ -397,18 +490,11 @@
             return `Intermission — period ${period} held at ${formatAbsoluteTime(effectiveSeconds)}`;
         }
         if (!apiTimerOn) {
-            return `Clock stopped — API ${formatAbsoluteTime(apiSeconds)} used as is, no latency to correct`;
+            return `Clock stopped — API ${formatAbsoluteTime(apiSeconds)} used as is, nothing to trim`;
         }
         const source = usingExactClock ? "Computed" : "Reported live_time";
-        return `${source} + ${driftOffset}s → overlay ${formatAbsoluteTime(effectiveSeconds)}`;
+        return `${source} ${formatDrift(driftOffset)} → overlay ${formatAbsoluteTime(effectiveSeconds)}`;
     });
-
-    // How far the time on air is from the reading the server gave us
-    let leadSeconds = $derived(
-        apiSeconds === null || effectiveSeconds === null
-            ? 0
-            : effectiveSeconds - apiSeconds,
-    );
 
     let syncLabel = $derived.by(() => {
         if (clockSkewMs === null) return "Sync ?";
@@ -505,24 +591,92 @@
         clockSkewMs = Math.round(Math.max(...skewSamples));
     }
 
-    // Push the API time (plus drift) to the overlay as an absolute value.
-    // Guarded so a drift nudge while paused does not leak to the overlay.
-    function applyAutoClock() {
-        if (timeMode !== "auto" || !globalTimerActive) return;
-
-        const seconds = effectiveSeconds;
-        if (seconds === null) return;
-
-        time = formatAbsoluteTime(seconds);
-
+    // The clock on air belongs to the overlay. What goes over the wire is a
+    // state transition plus the anchor it starts from, not a value per second:
+    // this tab's timers stop being reliable the moment it is behind the OBS
+    // window, and a clock driven from here would stall on air.
+    function pushClockState(running, seconds, force = false) {
         if ($connectionStatus !== "connected") return;
 
-        // Avoid re-broadcasting an unchanged clock every second
-        const key = `${seconds}|${period}|${homeTeamScore}|${awayTeamScore}`;
-        if (key === lastAutoKey) return;
-        lastAutoKey = key;
+        const now = Date.now();
 
-        sendClockWithState("clock_set", { time, seconds });
+        // What the overlay is showing right now, from the anchor it was last
+        // given - the same arithmetic it does itself.
+        const shown =
+            overlayClockSeconds === null
+                ? null
+                : overlayClockSeconds +
+                  (overlayClockRunning
+                      ? (now - overlayClockSentAtMs) / 1000
+                      : 0);
+
+        const gap = shown === null ? null : seconds - shown;
+        const rewinding =
+            running && gap !== null && gap < 0 && -gap < MAX_SILENT_REWIND;
+
+        const stateChanged =
+            running !== overlayClockRunning || period !== overlayPeriod;
+        const stale = now - overlayClockSentAtMs >= CLOCK_RESYNC_MS;
+        const diverged =
+            gap === null || (Math.abs(gap) > CLOCK_RESYNC_TOLERANCE && !rewinding);
+
+        if (!force && !stateChanged && !stale && !diverged) return;
+
+        // A resync that would rewind repeats what the overlay already has: it
+        // still answers a reloaded overlay without touching a running one.
+        const anchor = rewinding ? shown : seconds;
+
+        overlayClockRunning = running;
+        overlayClockSeconds = anchor;
+        overlayClockSentAtMs = now;
+
+        sendClockWithState(running ? "clock_run" : "clock_pause", {
+            seconds: anchor,
+            time: formatAbsoluteTime(Math.floor(anchor)),
+        });
+    }
+
+    // Forget what the overlay is believed to have, so the next push goes out
+    // whatever it says. Used when the overlay may have missed something.
+    function invalidateOverlayClock() {
+        overlayClockSeconds = null;
+        overlayClockSentAtMs = 0;
+    }
+
+    // Stop the overlay clock at the time we last worked out, whether or not
+    // the auto feed is still running - a paused feed must not leave a clock
+    // free-running on air.
+    function pauseOverlayClock() {
+        const seconds = effectiveSecondsExact;
+        pushClockState(
+            false,
+            seconds === null ? timeToSeconds(time) : Math.floor(seconds),
+            true,
+        );
+    }
+
+    // Hand the API time (plus corrections) over as an anchor. Guarded so a
+    // drift nudge while paused does not leak to the overlay.
+    function applyAutoClock(force = false) {
+        if (timeMode !== "auto" || !globalTimerActive) return;
+
+        const seconds = effectiveSecondsExact;
+        if (seconds === null) return;
+
+        time = formatAbsoluteTime(Math.floor(seconds));
+
+        // heldAtPeriodEnd is an intermission being shown as the previous
+        // period at its end time, so nothing is running there either. Nor is
+        // it at the start of a period while a negative offset still holds the
+        // clock at 00:00: let the overlay free-run from there and it would
+        // count seconds the broadcast clock has not reached yet.
+        const running =
+            apiTimerOn && !heldAtPeriodEnd && period !== 5 && seconds > 0;
+        pushClockState(running, seconds, force);
+
+        // A clock message carries the score with it, but only when one is
+        // actually sent - a score that changes between anchors needs its own.
+        pushScoreIfChanged();
     }
 
     // In manual mode there is no clock event to carry an API score change,
@@ -541,11 +695,12 @@
         overlayAwayScore = awayTeamScore;
     }
 
-    // The anchor is refreshed once per second, but the time it implies can be
-    // evaluated at any instant. Ticking locally lets the overlay change on the
-    // real second boundary instead of whenever a poll happens to land.
+    // This tick keeps our own reading current and gives the transition and
+    // resync checks somewhere to run. It is not what moves the clock on air:
+    // the overlay does that from the last anchor, so this being throttled
+    // behind the OBS window costs a late resync, never a frozen clock.
     $effect(() => {
-        if (timeMode !== "auto" || !globalTimerActive || !usingExactClock) {
+        if (timeMode !== "auto" || !globalTimerActive) {
             return;
         }
 
@@ -818,6 +973,16 @@
                     anchorSeconds = null;
                 }
 
+                // Fallback phase: the first reading of a running stretch, kept
+                // until the clock stops so the fraction stays put across polls
+                if (!apiTimerOn) {
+                    freeAnchorWallMs = null;
+                    freeAnchorSeconds = null;
+                } else if (freeAnchorWallMs === null && seconds !== null) {
+                    freeAnchorWallMs = receivedAt;
+                    freeAnchorSeconds = seconds;
+                }
+
                 apiReceivedAtMs = receivedAt;
                 nowMs = receivedAt;
             }
@@ -979,7 +1144,11 @@
         // interval down and fires a fresh getScore right away.
         if (timeMode === "auto") {
             globalTimerActive = !globalTimerActive;
-            lastAutoKey = "";
+            if (globalTimerActive) {
+                invalidateOverlayClock();
+            } else {
+                pauseOverlayClock();
+            }
             return;
         }
 
@@ -1066,12 +1235,14 @@
             if (timeMode === "manual") {
                 obsWebSocket.sendClockControl("clock_reset", { time });
             } else if (timeMode === "auto") {
-                lastAutoKey = "";
+                invalidateOverlayClock();
                 applyAutoClock();
             }
 
             broadcastPenalties();
             broadcastShootout();
+            pushBreak();
+            pushPlansi();
         }
     }
 
@@ -1250,7 +1421,7 @@
             localStorage.getItem(`drift-offset-${matchId}`),
         );
         if (!isNaN(savedDrift)) {
-            driftOffset = savedDrift;
+            driftOffset = Math.min(MAX_DRIFT, Math.max(-MAX_DRIFT, savedDrift));
         }
 
         // Auto-connect to OBS WebSocket
@@ -1381,16 +1552,6 @@
                         </span>
                     {/if}
 
-                    {#if leadSeconds !== 0}
-                        <span
-                            class="api-timer warn"
-                            title="On air differs from the reported live_time — a missed poll, or the Latency trim"
-                        >
-                            {formatAbsoluteTime(apiSeconds)} → {formatAbsoluteTime(
-                                effectiveSeconds,
-                            )}
-                        </span>
-                    {/if}
                 {/if}
             </div>
 
@@ -1475,7 +1636,7 @@
 
             {#if timeMode === "auto"}
                 <div class="control-group">
-                    <span class="field-label">Latency</span>
+                    <span class="field-label">Offset</span>
                     <div class="drift-control" class:idle={!apiTimerOn}>
                         <button
                             class="drift-btn"
@@ -1483,8 +1644,8 @@
                                 adjustDrift(-1);
                                 e.currentTarget.blur();
                             }}
-                            disabled={driftOffset === 0}
-                            title="Latency −1 s (↓)"
+                            disabled={driftOffset === -MAX_DRIFT}
+                            title="Hold the clock on air back 1 s (↓)"
                         >−</button>
                         <span
                             class="drift-value"
@@ -1498,7 +1659,7 @@
                                 e.currentTarget.blur();
                             }}
                             disabled={driftOffset === MAX_DRIFT}
-                            title="Latency +1 s (↑)"
+                            title="Run the clock on air 1 s ahead (↑)"
                         >+</button>
                         <button
                             class="drift-reset"
@@ -1507,7 +1668,7 @@
                                 e.currentTarget.blur();
                             }}
                             disabled={driftOffset === 0}
-                            title="Reset drift"
+                            title="Back to the API time"
                         >⟲</button>
                     </div>
                 </div>
