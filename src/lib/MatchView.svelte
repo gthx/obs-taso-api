@@ -40,12 +40,15 @@
     const POLL_INTERVAL_MS = 1000;
 
     // Nothing on air changes during an intermission, so polling stops for the
-    // duration. The countdown itself brings it back, which is why the break
-    // panel can pause it safely where a manual pause could not.
+    // duration. The instant it comes back is computed from the countdown when
+    // the break starts, so nothing here has to tick for it to resume.
     const BREAK_POLL_RESUME_SEC = 5;
 
     // How long the official clock has to run before the panel comes off air
     const BREAK_AUTOHIDE_MS = 2000;
+    // How often the break state is repeated for the benefit of an overlay that
+    // reloaded mid-break. Not what drives the countdown.
+    const BREAK_RESYNC_MS = 10000;
     // Torneopal carries no intermission length (period_sec and
     // period_lengths_sec are playing time only, and p*_start_time/p*_end_time
     // come back empty), so these are fixed defaults. Each press starts fresh;
@@ -175,14 +178,15 @@
 
     // Intermission panel. The countdown is anchored to a wall-clock instant so
     // it cannot drift, and the operator types the remaining time the same way
-    // as the manual game clock.
+    // as the manual game clock. The overlay owns the clock on air: it is told
+    // the remaining time when it changes and counts down itself, so a
+    // throttled admin tab cannot freeze what the viewer sees.
     let breakActive = $state(false);
     let breakEndsAtMs = $state(/** @type {number | null} */ (null));
     let breakInput = $state("");
     let breakKind = $state("intermission"); // "intermission" or "powerbreak"
     let breakInputActive = $state(false);
     let gameResumedAtMs = $state(/** @type {number | null} */ (null));
-    let lastBreakKey = "";
 
     // Result plansi. The PSD's tab layer reads "LOPPUTULOS" - the "RESULT" in
     // the Havainnekuva render is that render's own wording, and the rest of
@@ -190,17 +194,29 @@
     const RESULT_TAB_TEXT = "LOPPUTULOS";
     let resultActive = $state(false);
 
-    let breakRemaining = $derived(
+    // The instant the break ends, not a ticking countdown: this view shows
+    // when it is over, the overlay shows how long is left.
+    let breakEndsAtLabel = $derived(
         breakEndsAtMs === null
-            ? 0
-            : Math.max(0, Math.ceil((breakEndsAtMs - nowMs) / 1000)),
+            ? ""
+            : new Date(breakEndsAtMs).toLocaleTimeString(),
     );
 
-    // A boolean rather than the remaining seconds, so the polling effect is
-    // not torn down and restarted on every tick
-    let breakPausesPolling = $derived(
-        breakActive && breakRemaining > BREAK_POLL_RESUME_SEC,
-    );
+    // Remaining whole seconds right now. Read when something is sent or typed,
+    // never rendered - nothing in this view counts down.
+    function breakRemainingNow() {
+        if (breakEndsAtMs === null) return 0;
+        return Math.max(0, Math.ceil((breakEndsAtMs - Date.now()) / 1000));
+    }
+
+    // Polling is paused until this wall-clock instant. Compared against the
+    // clock rather than counted down, so a tab that was throttled through the
+    // break resumes on its first tick afterwards instead of drifting.
+    let pollPausedUntilMs = $state(/** @type {number | null} */ (null));
+
+    // The interval now keeps running through a break, so "polling" on the
+    // header means requests are actually going out
+    let pollingLive = $derived(isPollingScores && pollPausedUntilMs === null);
 
     // Key repeat protection
     let lastKeyPress = 0;
@@ -548,14 +564,15 @@
         return `${value}.`;
     }
 
+    // Sent on state changes only: the remaining time is what it is at the
+    // moment of sending, and the overlay anchors it to its own clock.
     function pushBreak() {
         if ($connectionStatus !== "connected") return;
-
-        const key = `${breakActive}|${breakRemaining}|${breakLabel}`;
-        if (key === lastBreakKey) return;
-        lastBreakKey = key;
-
-        obsWebSocket.sendBreakUpdate(breakActive, breakRemaining, breakLabel);
+        obsWebSocket.sendBreakUpdate(
+            breakActive,
+            breakRemainingNow(),
+            breakLabel,
+        );
     }
 
     // The result plansi and the break panel are both full-width lower thirds,
@@ -596,7 +613,7 @@
         breakActive = true;
         breakEndsAtMs = Date.now() + Math.max(0, seconds) * 1000;
         gameResumedAtMs = null;
-        nowMs = Date.now();
+        pausePollingForBreak();
         pushBreak();
     }
 
@@ -604,9 +621,19 @@
         breakActive = false;
         breakEndsAtMs = null;
         gameResumedAtMs = null;
+        pollPausedUntilMs = null;
         breakInput = "";
         breakInputActive = false;
         pushBreak();
+    }
+
+    // The break is over for polling purposes a few seconds before it is over
+    // on air, so the clock is already live when play resumes.
+    function pausePollingForBreak() {
+        pollPausedUntilMs =
+            breakEndsAtMs === null
+                ? null
+                : breakEndsAtMs - BREAK_POLL_RESUME_SEC * 1000;
     }
 
     // Each button toggles its own kind, so pressing the other one switches
@@ -634,37 +661,33 @@
         const total = minutes * 60 + seconds;
         breakEndsAtMs = Date.now() + total * 1000;
         gameResumedAtMs = null;
-        nowMs = Date.now();
+        pausePollingForBreak();
 
         breakInput = "";
         breakInputActive = false;
         pushBreak();
     }
 
-    // The countdown ticks locally; the overlay is only told whole seconds.
-    // The panel also comes off air by itself once the official clock runs, so
-    // a distracted operator cannot leave a countdown over live play.
+    // The countdown needs no traffic of its own - the overlay runs it. This
+    // only repeats the state so an overlay reloaded mid-break picks the panel
+    // back up; being late costs nothing, because every push carries the
+    // remaining time as of that moment.
     $effect(() => {
         if (!breakActive) return;
 
-        const intervalId = setInterval(() => {
-            nowMs = Date.now();
-
-            if (
-                gameResumedAtMs !== null &&
-                nowMs - gameResumedAtMs >= BREAK_AUTOHIDE_MS
-            ) {
-                endBreak();
-                return;
-            }
-
-            pushBreak();
-        }, 100);
+        const intervalId = setInterval(pushBreak, BREAK_RESYNC_MS);
 
         return () => clearInterval(intervalId);
     });
 
     async function pollScore() {
+        // An intermission pauses the requests without stopping the interval,
+        // so the deadline is checked here rather than gating the effect
+        if (pollPausedUntilMs !== null) {
+            if (Date.now() < pollPausedUntilMs) return;
+            pollPausedUntilMs = null;
+        }
+
         // Never let a slow response push us past one request per second
         if (isFetchingScore) return;
 
@@ -687,7 +710,6 @@
         const shouldPoll =
             torneopalEnabled &&
             wantsApi &&
-            !breakPausesPolling &&
             (!clockGatesPolling || globalTimerActive);
 
         if (!shouldPoll) {
@@ -757,9 +779,14 @@
 
                 apiTimerOn = String(score.live_timer_on) === "1";
 
-                // Play has resumed - the break panel has to come off air
+                // Play has resumed - the break panel has to come off air. The
+                // poll loop is the only thing that sees this, so it closes the
+                // panel too: a timer here would freeze with a hidden tab.
                 if (breakActive && apiTimerOn) {
                     if (gameResumedAtMs === null) gameResumedAtMs = receivedAt;
+                    if (receivedAt - gameResumedAtMs >= BREAK_AUTOHIDE_MS) {
+                        endBreak();
+                    }
                 } else {
                     gameResumedAtMs = null;
                 }
@@ -1274,7 +1301,7 @@
             {/if}
 
             <div class="header-actions">
-                {#if isPollingScores}
+                {#if pollingLive}
                     <span
                         class="poll-status"
                         class:error={!!pollError}
@@ -1327,7 +1354,7 @@
                     {globalTimerActive ? "Running" : "Paused"}
                 </span>
 
-                {#if timeMode === "auto" && isPollingScores}
+                {#if timeMode === "auto" && pollingLive}
                     <span
                         class="api-timer"
                         class:on={apiTimerOn}
@@ -1762,7 +1789,9 @@
                         breakInputActive = true;
                         if (!breakInput) {
                             breakInput = formatAbsoluteTime(
-                                breakActive ? breakRemaining : DEFAULT_BREAK_SECONDS,
+                                breakActive
+                                    ? breakRemainingNow()
+                                    : DEFAULT_BREAK_SECONDS,
                             ).replace(":", "");
                         }
                         // currentTarget is nulled once the handler returns, so
@@ -1794,17 +1823,13 @@
                     disabled={$connectionStatus !== "connected"}
                     placeholder={breakInputActive
                         ? "MMSS"
-                        : formatAbsoluteTime(
-                              breakActive ? breakRemaining : DEFAULT_BREAK_SECONDS,
-                          )}
+                        : formatAbsoluteTime(DEFAULT_BREAK_SECONDS)}
                     maxlength="4"
                 />
 
                 {#if breakActive}
-                    <span class="break-status" class:ending={breakRemaining === 0}>
-                        {breakRemaining === 0
-                            ? "Break over"
-                            : formatAbsoluteTime(breakRemaining)}
+                    <span class="break-status" title="The overlay runs the countdown">
+                        Ends {breakEndsAtLabel}
                     </span>
 
                     <span class="break-label-preview">
@@ -1816,7 +1841,7 @@
                         <span class="break-resumed">
                             Game running — panel closing
                         </span>
-                    {:else if breakPausesPolling}
+                    {:else if pollPausedUntilMs !== null}
                         <span class="break-note">
                             Polling paused until {BREAK_POLL_RESUME_SEC}s left
                         </span>
@@ -2190,15 +2215,11 @@
     }
 
     .break-status {
-        font-size: 15px;
+        font-size: 13px;
         font-weight: bold;
         color: #b39ddb;
         font-variant-numeric: tabular-nums;
-        min-width: 55px;
-    }
-
-    .break-status.ending {
-        color: #ffc107;
+        white-space: nowrap;
     }
 
     .break-note {

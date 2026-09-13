@@ -39,11 +39,29 @@
     let homeShootout = $state([]);
     let awayShootout = $state([]);
 
-    // Intermission panel. The operator owns the countdown, so this view only
-    // renders what it is handed - same contract as the auto-mode clock.
+    // Intermission panel. The operator hands over the remaining time whenever
+    // it changes and this view counts it down itself, anchored to a wall-clock
+    // instant of its own: the admin page is an ordinary tab whose timers are
+    // throttled the moment it goes behind another window, and a countdown
+    // driven from there would stall on air. Nothing throttles a browser source.
     let breakActive = $state(false);
-    let breakRemaining = $state(0);
+    let breakEndsAtMs = $state(/** @type {number | null} */ (null));
     let breakLabel = $state("ERÄTAUKO");
+    let breakNowMs = $state(Date.now());
+
+    let breakRemaining = $derived(
+        breakEndsAtMs === null
+            ? 0
+            : Math.max(0, Math.ceil((breakEndsAtMs - breakNowMs) / 1000)),
+    );
+
+    $effect(() => {
+        if (!breakActive) return;
+
+        const intervalId = setInterval(() => (breakNowMs = Date.now()), 100);
+
+        return () => clearInterval(intervalId);
+    });
 
     // Plansi (lower third). Same contract as the break panel: the operator
     // owns what is on air, this view only renders what it is handed. The score
@@ -237,12 +255,27 @@
         if (Array.isArray(data.awayAttempts)) awayShootout = data.awayAttempts;
     }
 
+    // remainingSeconds is what was left when the message was sent, so it is
+    // re-anchored here instead of being trusted as an absolute instant - the
+    // two pages may be on different machines. Updates repeat while a break
+    // runs, so a value we are already showing is ignored rather than re-
+    // anchored: otherwise the resync would nudge the display every time.
     function handleBreakUpdate(data) {
         breakActive = !!data.active;
-        if (typeof data.remainingSeconds === "number") {
-            breakRemaining = data.remainingSeconds;
-        }
         if (data.label) breakLabel = data.label;
+
+        if (!breakActive) {
+            breakEndsAtMs = null;
+            return;
+        }
+
+        if (typeof data.remainingSeconds !== "number") return;
+
+        breakNowMs = Date.now();
+        const endsAt = breakNowMs + data.remainingSeconds * 1000;
+        if (breakEndsAtMs === null || Math.abs(endsAt - breakEndsAtMs) > 1000) {
+            breakEndsAtMs = endsAt;
+        }
     }
 
     function handlePlansiUpdate(data) {
