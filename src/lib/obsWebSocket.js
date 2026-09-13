@@ -1,13 +1,6 @@
 import { writable } from "svelte/store";
 
 export const connectionStatus = writable("disconnected");
-export const matchData = writable({
-  homeTeam: { name: "", score: 0 },
-  awayTeam: { name: "", score: 0 },
-  period: 1,
-  time: "00:00",
-  lastUpdated: null,
-});
 
 class OBSWebSocketClient {
   constructor() {
@@ -186,14 +179,6 @@ class OBSWebSocketClient {
   }
 
   handleEvent(eventData) {
-    if (eventData.eventType === "CustomEvent") {
-      const { eventData: customData } = eventData;
-      if (customData && customData.eventName === "MatchUpdate") {
-        matchData.set(customData.eventData);
-      }
-    }
-
-    // Emit to any registered listeners
     const listeners = this.eventListeners.get(eventData.eventType) || [];
     listeners.forEach((callback) => callback(eventData));
   }
@@ -229,28 +214,6 @@ class OBSWebSocketClient {
 
       this.ws.send(JSON.stringify(request));
     });
-  }
-
-  async setMatchData(data) {
-    try {
-      await this.sendRequest("SetPersistentData", {
-        realm: "OBS_WEBSOCKET_DATA_REALM_GLOBAL",
-        slotName: "floorball-match",
-        slotValue: data,
-      });
-
-      // Also broadcast as custom event for real-time updates
-      await this.sendRequest("BroadcastCustomEvent", {
-        eventData: {
-          eventName: "MatchUpdate",
-          eventData: data,
-        },
-      });
-
-      matchData.set(data);
-    } catch (error) {
-      console.error("Failed to set match data:", error);
-    }
   }
 
   async sendClockControl(action, data = {}) {
@@ -339,14 +302,13 @@ class OBSWebSocketClient {
     }
   }
 
-  async sendPlansiUpdate(active, kind, tabText, strip = null) {
+  async sendPlansiUpdate(active, tabText, strip = null) {
     try {
       await this.sendRequest("BroadcastCustomEvent", {
         eventData: {
           eventName: "PlansiUpdate",
           eventData: {
             active,
-            kind,
             tabText,
             strip,
             timestamp: Date.now(),
@@ -372,23 +334,6 @@ class OBSWebSocketClient {
     } catch (error) {
       console.error("Failed to send match info:", error);
     }
-  }
-
-  async getMatchData() {
-    try {
-      const response = await this.sendRequest("GetPersistentData", {
-        realm: "OBS_WEBSOCKET_DATA_REALM_GLOBAL",
-        slotName: "floorball-match",
-      });
-
-      if (response && response.slotValue) {
-        matchData.set(response.slotValue);
-        return response.slotValue;
-      }
-    } catch (error) {
-      console.error("Failed to get match data:", error);
-    }
-    return null;
   }
 
   addEventListener(eventType, callback) {

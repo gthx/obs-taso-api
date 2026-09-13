@@ -1,10 +1,6 @@
 <script>
     import { onMount } from "svelte";
-    import {
-        obsWebSocket,
-        connectionStatus,
-        matchData,
-    } from "./obsWebSocket.js";
+    import { obsWebSocket, connectionStatus } from "./obsWebSocket.js";
     import { torneopalApi } from "./torneopalApi.js";
     import NumericInput from "./NumericInput.svelte";
 
@@ -307,22 +303,6 @@
             period !== overlayPeriod,
     );
 
-    // Subscribe to match data changes using $effect
-    $effect(() => {
-        if ($matchData) {
-            if ($matchData.homeTeam?.name)
-                homeTeamName = $matchData.homeTeam?.name;
-            if ($matchData.homeTeam?.score)
-                homeTeamScore = $matchData.homeTeam?.score;
-            if ($matchData.awayTeam?.name)
-                awayTeamName = $matchData.awayTeam?.name;
-            if ($matchData.awayTeam?.score)
-                awayTeamScore = $matchData.awayTeam?.score;
-            if ($matchData.period) period = $matchData.period;
-            if ($matchData.time) time = $matchData.time;
-        }
-    });
-
     // Helper: send ClockControl with current score+period bundled
     function sendClockWithState(action, extraData = {}) {
         const payload = {
@@ -406,25 +386,26 @@
         isConnecting = true;
         try {
             await obsWebSocket.connect(wsUrl, wsPassword);
-            await obsWebSocket.getMatchData();
-
-            // Listen for clock sync from overlay
-            obsWebSocket.addEventListener("CustomEvent", (event) => {
-                if (event.eventData) {
-                    const { eventName, eventData } = event.eventData;
-                    if (eventName !== "ClockControl") return;
-
-                    if (eventData.action === "clock_sync") {
-                        handleClockSync(eventData);
-                    } else if (eventData.action === "clock_request") {
-                        handleClockRequest();
-                    }
-                }
-            });
         } catch (error) {
             console.error("Connection failed:", error);
         } finally {
             isConnecting = false;
+        }
+    }
+
+    // One listener for the life of the page: obsWebSocket re-dials on its own
+    // and keeps its listeners across that, so registering per connection would
+    // handle the overlay twice over.
+    function handleCustomEvent(event) {
+        if (!event.eventData) return;
+
+        const { eventName, eventData } = event.eventData;
+        if (eventName !== "ClockControl") return;
+
+        if (eventData.action === "clock_sync") {
+            handleClockSync(eventData);
+        } else if (eventData.action === "clock_request") {
+            handleClockRequest();
         }
     }
 
@@ -734,12 +715,7 @@
     // so only one of them is ever on air.
     function pushPlansi() {
         if ($connectionStatus !== "connected") return;
-        obsWebSocket.sendPlansiUpdate(
-            resultActive,
-            "result",
-            RESULT_TAB_TEXT,
-            null,
-        );
+        obsWebSocket.sendPlansiUpdate(resultActive, RESULT_TAB_TEXT, null);
     }
 
     function hideResult() {
@@ -1425,6 +1401,7 @@
         }
 
         // Auto-connect to OBS WebSocket
+        obsWebSocket.addEventListener("CustomEvent", handleCustomEvent);
         if ($connectionStatus === "disconnected") {
             await connect();
         }
@@ -1436,6 +1413,7 @@
         document.addEventListener("keydown", handleKeydown);
 
         return () => {
+            obsWebSocket.removeEventListener("CustomEvent", handleCustomEvent);
             obsWebSocket.disconnect();
             stopGlobalTimer();
             document.removeEventListener("keydown", handleKeydown);

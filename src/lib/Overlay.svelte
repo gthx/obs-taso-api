@@ -1,16 +1,8 @@
 <script>
     import { onMount } from "svelte";
     import { fade, slide } from "svelte/transition";
-    import {
-        obsWebSocket,
-        connectionStatus,
-        matchData,
-    } from "./obsWebSocket.js";
+    import { obsWebSocket, connectionStatus } from "./obsWebSocket.js";
     import Plansi from "./Plansi.svelte";
-
-    let isConnected = $state(false);
-    let retryCount = $state(0);
-    const maxRetries = 10;
 
     // Game clock. The overlay owns the clock on air: it is handed a state
     // transition plus an anchor - the playing time at the instant the message
@@ -141,68 +133,56 @@
 
     const password = getPasswordFromUrl();
 
-    async function connectToOBS() {
-        retryCount++;
-        try {
-            await obsWebSocket.connect("ws://localhost:4455", password);
-            isConnected = true;
-            retryCount = 0; // Reset on successful connection
+    // One listener for the life of the page. obsWebSocket re-dials on its own
+    // when the socket drops and keeps its listeners across that, so hanging
+    // this off the connect call would register it again on every reconnect
+    // and handle every event twice.
+    function handleCustomEvent(event) {
+        if (!event.eventData) return;
 
-            // Load initial match data
-            await obsWebSocket.getMatchData();
+        const { eventName, eventData } = event.eventData;
 
-            // Listen for control signals
-            obsWebSocket.addEventListener("CustomEvent", (event) => {
-                if (event.eventData) {
-                    const { eventName, eventData } = event.eventData;
-
-                    switch (eventName) {
-                        case "ClockControl":
-                            handleClockControl(eventData);
-                            break;
-                        case "ScoreUpdate":
-                            handleScoreUpdate(eventData);
-                            break;
-                        case "MatchInfo":
-                            handleMatchInfo(eventData);
-                            break;
-                        case "PenaltyUpdate":
-                            handlePenaltyUpdate(eventData);
-                            break;
-                        case "ShootoutUpdate":
-                            handleShootoutUpdate(eventData);
-                            break;
-                        case "BreakUpdate":
-                            handleBreakUpdate(eventData);
-                            break;
-                        case "PlansiUpdate":
-                            handlePlansiUpdate(eventData);
-                            break;
-                        case "MatchUpdate":
-                            // Legacy support - can be removed later
-                            console.log(
-                                "Received legacy match update:",
-                                eventData,
-                            );
-                            break;
-                    }
-                }
-            });
-
-            // Ask the operator for everything we missed. A browser source can
-            // be restarted at any moment, and waiting for the next resync
-            // means waiting on a timer in a tab that may be throttled - an
-            // incoming socket message is not.
-            await obsWebSocket.sendClockControl("clock_request");
-        } catch (error) {
-            console.error("Failed to connect:", error);
-
-            if (retryCount < maxRetries) {
-                // Retry connection after a delay
-                setTimeout(connectToOBS, 2000);
-            }
+        switch (eventName) {
+            case "ClockControl":
+                handleClockControl(eventData);
+                break;
+            case "ScoreUpdate":
+                handleScoreUpdate(eventData);
+                break;
+            case "MatchInfo":
+                handleMatchInfo(eventData);
+                break;
+            case "PenaltyUpdate":
+                handlePenaltyUpdate(eventData);
+                break;
+            case "ShootoutUpdate":
+                handleShootoutUpdate(eventData);
+                break;
+            case "BreakUpdate":
+                handleBreakUpdate(eventData);
+                break;
+            case "PlansiUpdate":
+                handlePlansiUpdate(eventData);
+                break;
         }
     }
+
+    // Ask the operator for everything we missed, on every connection rather
+    // than only the first: a browser source can be restarted at any moment,
+    // and so can the socket. Waiting for the next resync instead means waiting
+    // on a timer in a tab that may be throttled - an incoming socket message
+    // is not.
+    let requestedForConnection = false;
+    $effect(() => {
+        if ($connectionStatus !== "connected") {
+            requestedForConnection = false;
+            return;
+        }
+
+        if (requestedForConnection) return;
+        requestedForConnection = true;
+        obsWebSocket.sendClockControl("clock_request");
+    });
 
     function handleClockControl(data) {
         const { action } = data;
@@ -212,23 +192,16 @@
             action === "clock_start" ||
             action === "clock_run" ||
             action === "clock_pause" ||
-            action === "period_change" ||
-            action === "clock_set"
+            action === "period_change"
         ) {
             if (data.homeScore !== undefined) homeScore = data.homeScore;
             if (data.awayScore !== undefined) awayScore = data.awayScore;
-        }
 
-        // Update period from state-carrying events
-        if (
-            action === "clock_start" ||
-            action === "clock_run" ||
-            action === "clock_pause" ||
-            action === "period_change" ||
-            action === "clock_set"
-        ) {
             if (data.period !== undefined && data.period !== internalPeriod) {
-                handlePeriodChange(data.period, data.periodLength || internalPeriodLength);
+                handlePeriodChange(
+                    data.period,
+                    data.periodLength || internalPeriodLength,
+                );
             }
         }
 
@@ -247,9 +220,6 @@
                 break;
             case "clock_reset":
                 resetInternalClock(data.time);
-                break;
-            case "clock_set":
-                setInternalClock(data);
                 break;
             case "period_change":
                 handlePeriodChange(data.period, data.periodLength);
@@ -435,19 +405,8 @@
         sendClockSync();
     }
 
-    // Legacy absolute set from older admin builds: stop and show the value.
-    function setInternalClock(data) {
-        stopTicking();
-
-        if (typeof data.seconds === "number") {
-            setAnchor(Math.max(0, data.seconds));
-        } else if (data.time) {
-            setAnchor(parseTime(data.time));
-        }
-    }
-
     function sendClockSync() {
-        if (!isConnected) return;
+        if ($connectionStatus !== "connected") return;
         obsWebSocket.sendClockControl("clock_sync", {
             time: displayTime,
             seconds: internalSeconds,
@@ -467,9 +426,17 @@
     }
 
     onMount(() => {
-        connectToOBS();
+        obsWebSocket.addEventListener("CustomEvent", handleCustomEvent);
+
+        // A failed dial closes the socket, which starts obsWebSocket's own
+        // retry loop - there is nothing to do here but not let the rejection
+        // go unhandled.
+        obsWebSocket
+            .connect("ws://localhost:4455", password)
+            .catch((error) => console.error("Failed to connect:", error));
 
         return () => {
+            obsWebSocket.removeEventListener("CustomEvent", handleCustomEvent);
             obsWebSocket.disconnect();
             stopTicking();
         };
@@ -624,10 +591,8 @@
                 {/if}
             </div>
         </div>
-    {:else if $connectionStatus === "disconnected" && retryCount < maxRetries}
-        <div class="connecting">
-            Connecting to OBS... (Attempt {retryCount}/{maxRetries})
-        </div>
+    {:else}
+        <div class="connecting">Connecting to OBS...</div>
     {/if}
 </div>
 
