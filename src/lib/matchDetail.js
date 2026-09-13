@@ -185,7 +185,7 @@ function topScorers(match, teamId, limit) {
 }
 
 /** How many players each side of the result plansi has room for. */
-const SCORER_ROWS = 3;
+const SCORER_ROWS = 5;
 
 /**
  * Everything the two full-screen planssit need, in one payload small enough to

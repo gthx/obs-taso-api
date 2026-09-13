@@ -152,6 +152,24 @@
         return Math.min(1, bodyHeight / needed);
     });
 
+    /* The two points tables are one table, so the lists are zipped: a row is
+       whatever each side has in that position, and a side that has run out of
+       scorers simply leaves its cells unpainted. */
+    let scorerRows = $derived.by(() => {
+        if (body?.kind !== "stats") return [];
+
+        const home = body.scorers?.home ?? [];
+        const away = body.scorers?.away ?? [];
+
+        return Array.from(
+            { length: Math.max(home.length, away.length) },
+            (_, index) => ({
+                home: home[index] ?? null,
+                away: away[index] ?? null,
+            }),
+        );
+    });
+
     function periodHeading(period) {
         if (period === 4) return "JATKOAIKA";
         if (period === 5) return "RANGAISTUSLAUKAUKSET";
@@ -187,20 +205,34 @@
     </span>
 {/snippet}
 
-<!-- Shirt number to the outside, points to the inside, so the two teams'
-     points columns end up side by side across the gutter and compare. -->
-{#snippet scorerRow(player, side)}
-    <div class="scorer-row" class:away={side === "away"}>
-        <span class="scorer-number"
-            >#{@render fixedDigits(player.number)}</span
-        >
-        <span class="scorer-name">{player.name}</span>
-        <span class="scorer-points"
-            >{@render fixedDigits(
+<!--
+  One side of a points row. Shirt number to the outside, points to the inside,
+  so the two teams' points columns meet in the middle and compare directly. A
+  side with no player left renders its cells unpainted, the way the timeline
+  leaves the flank of a goal the other team scored.
+-->
+{#snippet scorerCells(player, side)}
+    {#if side === "home"}
+        <td class="sc-num" class:filled={!!player}>
+            {#if player}#{@render fixedDigits(player.number)}{/if}
+        </td>
+        <td class="sc-name" class:filled={!!player}>{player?.name ?? ""}</td>
+    {/if}
+
+    <td class="sc-pts {side}" class:filled={!!player}>
+        {#if player}
+            {@render fixedDigits(
                 `${player.goals}+${player.assists}=${player.points}`,
-            )}</span
-        >
-    </div>
+            )}
+        {/if}
+    </td>
+
+    {#if side === "away"}
+        <td class="sc-name away" class:filled={!!player}>{player?.name ?? ""}</td>
+        <td class="sc-num" class:filled={!!player}>
+            {#if player}#{@render fixedDigits(player.number)}{/if}
+        </td>
+    {/if}
 {/snippet}
 
 <div
@@ -316,37 +348,60 @@
                     </tbody>
                 </table>
             {:else if body.kind === "stats"}
-                <div class="stats">
-                    {#each body.stats ?? [] as row (row.label)}
-                        <div class="stat-row">
-                            <span class="stat-value"
-                                >{@render fixedDigits(row.home)}</span
-                            >
-                            <span class="stat-label">{row.label}</span>
-                            <span class="stat-value"
-                                >{@render fixedDigits(row.away)}</span
-                            >
-                        </div>
-                    {/each}
+                <!--
+                  The comparison, as tight as the timeline and built the same
+                  way: contiguous rows, a hairline between them, and the two
+                  value columns forming a continuous purple edge down each side
+                  instead of five separate floating bars.
+                -->
+                <table class="stats">
+                    <colgroup>
+                        <col class="st-value-col" />
+                        <col />
+                        <col class="st-value-col" />
+                    </colgroup>
+                    <tbody>
+                        {#each body.stats ?? [] as row (row.label)}
+                            <tr class="st-row">
+                                <td class="st-value"
+                                    >{@render fixedDigits(row.home)}</td
+                                >
+                                <td class="st-label">{row.label}</td>
+                                <td class="st-value"
+                                    >{@render fixedDigits(row.away)}</td
+                                >
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
 
-                    <div class="stats-heading">
-                        <span class="section-pill">MAALIT JA SYÖTÖT</span>
-                    </div>
-
-                    <div class="scorers">
-                        <div class="scorer-column">
-                            {#each body.scorers?.home ?? [] as player (player.number + player.name)}
-                                {@render scorerRow(player, "home")}
-                            {/each}
-                        </div>
-
-                        <div class="scorer-column away">
-                            {#each body.scorers?.away ?? [] as player (player.number + player.name)}
-                                {@render scorerRow(player, "away")}
-                            {/each}
-                        </div>
-                    </div>
+                <div class="stats-heading">
+                    <span class="section-pill">MAALIT JA SYÖTÖT</span>
                 </div>
+
+                <!--
+                  The two points columns sit side by side in the middle and add
+                  up to the score box's 198, so this plansi has the same spine
+                  running down it as the timeline does.
+                -->
+                <table class="scorers">
+                    <colgroup>
+                        <col class="sc-num-col" />
+                        <col />
+                        <col class="sc-pts-col" />
+                        <col class="sc-pts-col" />
+                        <col />
+                        <col class="sc-num-col" />
+                    </colgroup>
+                    <tbody>
+                        {#each scorerRows as row, index (index)}
+                            <tr class="sc-row">
+                                {@render scorerCells(row.home, "home")}
+                                {@render scorerCells(row.away, "away")}
+                            </tr>
+                        {/each}
+                    </tbody>
+                </table>
             {/if}
         </div>
     {/if}
@@ -842,55 +897,61 @@
 
 
 
-    /* The comparison row is the score bar's construction reused: a white bar
-       with a bordered purple box at each end, label centred between them. */
-    .stats {
-        margin-top: 1.042vw; /* 20 */
+    /* Same construction as the timeline: one table, rows butted together,
+       rules drawn with inset shadows so the row heights stay exact. */
+    .stats,
+    .scorers {
+        width: 100%;
+        table-layout: fixed;
+        border-collapse: separate;
+        border-spacing: 0;
     }
 
-    .stat-row {
-        display: grid;
-        grid-template-columns: 5.521vw 1fr 5.521vw; /* 106 */
-        align-items: stretch;
-        height: 3.958vw; /* 76 */
-        margin-bottom: 0.521vw; /* 10 */
-        background: #fff;
-        border-radius: 0.417vw; /* 8 */
-    }
-
-    .stat-value {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-sizing: border-box;
-        background: #542c8c;
-        border: 0.156vw solid #7e66bd; /* 3 */
-        border-radius: 0.417vw 0 0 0.417vw;
-        color: #fff;
-        font-size: 1.771vw; /* 34 */
+    .stats td,
+    .scorers td {
+        padding: 0;
         line-height: 1;
+        vertical-align: middle;
     }
 
-    .stat-value:last-child {
-        border-radius: 0 0.417vw 0.417vw 0;
+    .st-value-col {
+        width: 5.521vw; /* 106 */
     }
 
-    .stat-label {
-        display: flex;
-        align-items: center;
-        justify-content: center;
+    /* 60 rather than the 76-plus-a-gap these rows used to take. Five numbers
+       do not need a third of the screen, and what they give up goes to the
+       points table underneath. */
+    .st-row td {
+        height: 3.125vw; /* 60 */
+    }
+
+    .st-value {
+        background: #542c8c;
+        box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.16);
+        color: #fff;
+        font-size: 1.667vw; /* 32 */
+        text-align: center;
+    }
+
+    .st-label {
+        background: #fff;
+        box-shadow: inset 0 -1px 0 rgba(84, 44, 140, 0.18);
         color: #0a0a0a;
         font-family: "Urbanist", Arial, sans-serif;
         font-weight: 700;
-        font-size: 1.25vw; /* 24 */
-        line-height: 1;
+        font-size: 1.146vw; /* 22 */
         letter-spacing: 0.04em;
+        text-align: center;
+    }
+
+    .st-row:last-child td {
+        box-shadow: none;
     }
 
     .stats-heading {
         display: flex;
         justify-content: center;
-        margin-top: 1.563vw; /* 30 */
+        margin-top: 1.25vw; /* 24 */
         margin-bottom: 0.521vw; /* 10 */
     }
 
@@ -913,76 +974,81 @@
         white-space: nowrap;
     }
 
-    /* Two columns with the spine's own gutter between them, so the block lines
-       up with the timeline on the other plansi. */
-    .scorers {
-        display: grid;
-        grid-template-columns: 1fr 1.25vw 1fr; /* 24 gutter */
-    }
-
-    .scorer-column {
-        grid-column: 1;
-    }
-
-    .scorer-column.away {
-        grid-column: 3;
-    }
-
-    .scorer-row {
-        display: flex;
-        align-items: center;
-        height: 3.333vw; /* 64 */
-        margin-bottom: 0.417vw; /* 8 */
-        background: #fff;
-        border-radius: 0.417vw; /* 8 */
-        overflow: hidden;
-    }
-
-    .scorer-row.away {
-        flex-direction: row-reverse;
-    }
-
-    .scorer-number {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
+    .sc-num-col {
         width: 4.167vw; /* 80 */
+    }
+
+    /* Two of these make the score box's 198, so the points meet on the same
+       centre line the timeline's times run down. */
+    .sc-pts-col {
+        width: 5.156vw; /* 99 */
+    }
+
+    .sc-row td {
+        height: 2.917vw; /* 56 */
+    }
+
+    .sc-num.filled,
+    .sc-name.filled {
+        background: #fff;
+        box-shadow: inset 0 -1px 0 rgba(84, 44, 140, 0.18);
+    }
+
+    .sc-num {
         color: #542c8c;
         font-size: 1.146vw; /* 22 */
-        line-height: 1;
+        text-align: center;
     }
 
-    .scorer-name {
-        flex: 1;
-        min-width: 0;
+    .sc-name {
         padding: 0 0.521vw; /* 10 */
         color: #0a0a0a;
         font-family: "Urbanist", Arial, sans-serif;
         font-weight: 700;
         font-size: 1.042vw; /* 20 */
-        line-height: 1;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
     }
 
-    .scorer-row.away .scorer-name {
+    .sc-name.away {
         text-align: right;
     }
 
-    .scorer-points {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        align-self: stretch;
-        flex-shrink: 0;
-        width: 6.771vw; /* 130 */
-        box-sizing: border-box;
+    .sc-pts.filled {
         background: #542c8c;
-        border: 0.156vw solid #7e66bd; /* 3 */
         color: #fff;
         font-size: 1.25vw; /* 24 */
-        line-height: 1;
+        text-align: center;
+    }
+
+    /* The spine's outer edges, and a hairline down the middle of it so the two
+       teams' points do not read as one number. */
+    .sc-pts.home.filled {
+        box-shadow:
+            inset 0.156vw 0 0 #7e66bd,
+            inset 0 -1px 0 rgba(255, 255, 255, 0.16);
+    }
+
+    .sc-pts.away.filled {
+        box-shadow:
+            inset -0.156vw 0 0 #7e66bd,
+            inset 1px 0 0 rgba(255, 255, 255, 0.25),
+            inset 0 -1px 0 rgba(255, 255, 255, 0.16);
+    }
+
+    .sc-row:last-child .sc-num.filled,
+    .sc-row:last-child .sc-name.filled {
+        box-shadow: none;
+    }
+
+    .sc-row:last-child .sc-pts.home.filled {
+        box-shadow: inset 0.156vw 0 0 #7e66bd;
+    }
+
+    .sc-row:last-child .sc-pts.away.filled {
+        box-shadow:
+            inset -0.156vw 0 0 #7e66bd,
+            inset 1px 0 0 rgba(255, 255, 255, 0.25);
     }
 </style>
