@@ -54,6 +54,7 @@
     let breakActive = $state(false);
     let breakEndsAtMs = $state(/** @type {number | null} */ (null));
     let breakLabel = $state("ERÄTAUKO");
+    let breakKind = $state("intermission");
     let breakNowMs = $state(Date.now());
 
     let breakRemaining = $derived(
@@ -77,6 +78,13 @@
     let plansiActive = $state(false);
     let plansiTabText = $state("");
     let plansiStrip = $state(/** @type {any} */ (null));
+
+    // Goals and statistics, as last read off getMatch. Kept separately from
+    // what is on air and outlives any one plansi: the operator pushes it when
+    // the match data changes, and whichever full-screen plansi goes up next
+    // draws on it. Null until the first one arrives, which is also what a
+    // manually-run match never leaves - see the fallbacks below.
+    let matchDetail = $state(/** @type {any} */ (null));
 
     function formatPeriodLabel(value) {
         if (value === 4) return "JA";
@@ -106,8 +114,28 @@
 
     // Intermission and result are the same panel with a different tab and a
     // different thing hanging under it, so they resolve to one Plansi.
+    //
+    // Both have two forms. With match data behind them they are full-screen:
+    // the wordmark bar moves to the top of the frame, the score bar sits under
+    // it, and the rest of the screen carries the goals or the statistics.
+    // Without it - a manually-run match, or the API not reachable - they stay
+    // the lower third they have always been, which is also what an intermission
+    // falls back to at 0-0, where a timeline would be an empty screen.
     let plansi = $derived.by(() => {
         if (breakActive) {
+            // A power break is a minute long and the picture is going to a
+            // sponsor, not to a recap: the countdown and the score are the whole
+            // job, so it keeps the lower third whatever the match data says.
+            const goals =
+                breakKind === "powerbreak" ? [] : (matchDetail?.timeline ?? []);
+            if (goals.length) {
+                return {
+                    tabText: formatPeriodLabel(displayPeriod),
+                    header: { countdown: breakTime, label: breakLabel },
+                    body: { kind: "timeline", goals },
+                };
+            }
+
             return {
                 // The period rides in the tab, so the label is the wordmark
                 // alone - nothing is said twice.
@@ -120,6 +148,23 @@
             };
         }
         if (plansiActive) {
+            // A plansi carrying its own strip is a goal one - a lower third by
+            // definition, never the full-screen treatment.
+            if (!plansiStrip && matchDetail?.stats?.length) {
+                return {
+                    // The wordmark bar says what this is, so the tab is free to
+                    // carry how far the match went - "JA" is the whole story of
+                    // a game that needed overtime.
+                    tabText: formatPeriodLabel(displayPeriod),
+                    header: { label: plansiTabText },
+                    body: {
+                        kind: "stats",
+                        stats: matchDetail.stats,
+                        scorers: matchDetail.scorers,
+                    },
+                };
+            }
+
             return { tabText: plansiTabText, strip: plansiStrip };
         }
         return null;
@@ -163,6 +208,9 @@
                 break;
             case "PlansiUpdate":
                 handlePlansiUpdate(eventData);
+                break;
+            case "MatchDetail":
+                matchDetail = eventData;
                 break;
         }
     }
@@ -259,6 +307,7 @@
     function handleBreakUpdate(data) {
         breakActive = !!data.active;
         if (data.label) breakLabel = data.label;
+        if (data.kind) breakKind = data.kind;
 
         if (!breakActive) {
             breakEndsAtMs = null;
@@ -463,6 +512,8 @@
             {homeScore}
             {awayScore}
             strip={plansi.strip}
+            header={plansi.header}
+            body={plansi.body}
         />
     </div>
 {/if}

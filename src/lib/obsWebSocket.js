@@ -284,7 +284,7 @@ class OBSWebSocketClient {
     }
   }
 
-  async sendBreakUpdate(active, remainingSeconds, label) {
+  async sendBreakUpdate(active, remainingSeconds, label, kind = "intermission") {
     try {
       await this.sendRequest("BroadcastCustomEvent", {
         eventData: {
@@ -293,6 +293,7 @@ class OBSWebSocketClient {
             active,
             remainingSeconds,
             label,
+            kind,
             timestamp: Date.now(),
           },
         },
@@ -317,6 +318,28 @@ class OBSWebSocketClient {
       });
     } catch (error) {
       console.error("Failed to send plansi update:", error);
+    }
+  }
+
+  /**
+   * Goals and end-of-match statistics, as read off getMatch. Separate from
+   * PlansiUpdate on purpose: this is what the match data says, not what is on
+   * air, so the two change at their own rates. The overlay keeps the last one
+   * it received and the plansi that is up decides what to do with it.
+   */
+  async sendMatchDetail(detail) {
+    try {
+      await this.sendRequest("BroadcastCustomEvent", {
+        eventData: {
+          eventName: "MatchDetail",
+          eventData: {
+            ...detail,
+            timestamp: Date.now(),
+          },
+        },
+      });
+    } catch (error) {
+      console.error("Failed to send match detail:", error);
     }
   }
 

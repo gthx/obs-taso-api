@@ -2,6 +2,7 @@
     import { onMount } from "svelte";
     import { obsWebSocket, connectionStatus } from "./obsWebSocket.js";
     import { torneopalApi } from "./torneopalApi.js";
+    import { buildMatchDetail } from "./matchDetail.js";
     import NumericInput from "./NumericInput.svelte";
 
     // Read matchId from URL params
@@ -227,6 +228,12 @@
     // the overlay is Finnish. A plain string if it ever has to say otherwise.
     const RESULT_TAB_TEXT = "LOPPUTULOS";
     let resultActive = $state(false);
+
+    // Last getMatch reading, distilled to what the full-screen planssit show.
+    // Null until one of them is first put up on an API-backed match, which is
+    // what a manually-run match never leaves - the overlay falls back to the
+    // lower third for both planssit in that case.
+    let matchDetail = $state(/** @type {any} */ (null));
 
     // The instant the break ends, not a ticking countdown: this view shows
     // when it is over, the overlay shows how long is left.
@@ -708,6 +715,7 @@
             breakActive,
             breakRemainingNow(),
             breakLabel,
+            breakKind,
         );
     }
 
@@ -716,6 +724,34 @@
     function pushPlansi() {
         if ($connectionStatus !== "connected") return;
         obsWebSocket.sendPlansiUpdate(resultActive, RESULT_TAB_TEXT, null);
+    }
+
+    // Goals and statistics for the two full-screen planssit. getScore - the
+    // endpoint polled through the match - carries neither, so this is a getMatch
+    // of its own, made only when one of those planssit is about to go up. That
+    // is at most a handful of requests per match, which is what getMatch (unlike
+    // getScore) is priced for.
+    function pushMatchDetail() {
+        if ($connectionStatus !== "connected" || !matchDetail) return;
+        obsWebSocket.sendMatchDetail(matchDetail);
+    }
+
+    // Best-effort: a plansi whose data did not arrive falls back to the lower
+    // third it has always been, so a failed fetch is worth a line in the console
+    // and nothing more. Never awaited by a caller that is putting something on
+    // air - the panel goes up now and gains its detail when this lands.
+    async function refreshMatchDetail() {
+        if (!torneopalEnabled) return;
+
+        try {
+            const result = await torneopalApi.getMatchEnhanced(matchId);
+            if (!result?.match) return;
+
+            matchDetail = buildMatchDetail(result.match);
+            pushMatchDetail();
+        } catch (error) {
+            console.error("Failed to fetch match detail:", error);
+        }
     }
 
     function hideResult() {
@@ -736,6 +772,7 @@
         pushScoreIfChanged();
         resultActive = true;
         pushPlansi();
+        refreshMatchDetail();
     }
 
     function startBreak(seconds, kind) {
@@ -746,6 +783,7 @@
         gameResumedAtMs = null;
         pausePollingForBreak();
         pushBreak();
+        refreshMatchDetail();
     }
 
     function endBreak() {
@@ -806,7 +844,10 @@
     $effect(() => {
         if (!breakActive) return;
 
-        const intervalId = setInterval(pushBreak, BREAK_RESYNC_MS);
+        const intervalId = setInterval(() => {
+            pushBreak();
+            pushMatchDetail();
+        }, BREAK_RESYNC_MS);
 
         return () => clearInterval(intervalId);
     });
@@ -1219,6 +1260,7 @@
             broadcastShootout();
             pushBreak();
             pushPlansi();
+            pushMatchDetail();
         }
     }
 

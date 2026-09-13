@@ -52,7 +52,111 @@
          * @type {any}
          */
         strip = null,
+        /**
+         * The wordmark bar, moved above the score bar. Only the full-screen
+         * planssit use it - a goal plansi is a lower third and has none.
+         *   {countdown?, label}
+         * @type {any}
+         */
+        header = null,
+        /**
+         * What fills the screen under the bar:
+         *   {kind:"timeline", groups:[{period, goals:[...]}]}
+         *   {kind:"stats", stats:[{label, home, away}], scorers:{home,away}}
+         * @type {any}
+         */
+        body = null,
     } = $props();
+
+    /* The full-screen planssit are a frame, not a stack: the score bar is
+       pinned near the top of the picture and the wordmark bar sits back down at
+       the bottom where it has always been, so the composition has a known top
+       and bottom edge and the data lives between them.
+
+       At 1920x1080 that is:
+
+         60  tab top edge
+         51  tab (sits on top of the bar)
+         76  score bar
+        ---
+        187  content starts, hard against the bar
+        921  content ends
+         12  gap
+        933  wordmark bar, its original y - 92 tall, bottom edge at 1025
+
+       The 734 in between is the nominal budget, used only until the first
+       measurement lands. What the rows are actually fitted to is the measured
+       height of the content area, because it is pinned at both ends: that keeps
+       the graphic correct in a browser window of any shape, not just in OBS's
+       16:9 source. */
+    const BODY_HEIGHT = 734;
+
+    /* Measured in real pixels, both on the same element tree: the content area's
+       height, and the width of the 1165-wide column it sits in. The ratio
+       between them converts one into the other's units. */
+    let bodyPx = $state(0);
+    let plansiPx = $state(0);
+
+    let bodyHeight = $derived(
+        bodyPx && plansiPx ? (bodyPx * 1165) / plansiPx : BODY_HEIGHT,
+    );
+
+    /* Timeline row metrics. Deliberately tighter than
+       `inssidivari_lineup_planssi.png`, whose row rhythm is airy enough that
+       five goals would fill the screen - and with the rows collapsed into a
+       table there is no per-row gap left to account for at all. */
+    const GOAL_ROW = 40;
+    const PERIOD_ROW = 24;
+
+    /**
+     * Goals come in as one flat list; the plansi groups them by period so each
+     * stretch gets its own heading, the way the results service segments them.
+     * @type {any}
+     */
+    let groups = $derived.by(() => {
+        if (body?.kind !== "timeline") return [];
+
+        const out = [];
+        for (const goal of body.goals ?? []) {
+            const last = out[out.length - 1];
+            if (last && last.period === goal.period) last.goals.push(goal);
+            else out.push({ period: goal.period, goals: [goal] });
+        }
+        return out;
+    });
+
+    /**
+     * What the timeline is scaled by to use the height it has.
+     *
+     * Computed from the row counts rather than measured, so it is settled
+     * It only ever shrinks. The row height is drawn for a single line of type
+     * and stretching it just pads the row from the inside - the same vertical
+     * looseness the table was meant to get rid of - so a short list stays at
+     * its designed size and the room it does not need is left to the frame,
+     * which has a bottom edge to hold it. A long one shrinks without a floor,
+     * because shrinking beats clipping the last goals off the screen.
+     *
+     * The first pass uses the nominal budget, so a browser source is already
+     * within a rounding error of right on the frame it goes live on; the
+     * measurement then settles it exactly.
+     */
+    let timelineFit = $derived.by(() => {
+        if (!groups.length) return 1;
+
+        const needed = groups.reduce(
+            (total, group) =>
+                total + PERIOD_ROW + group.goals.length * GOAL_ROW,
+            0,
+        );
+
+        return Math.min(1, bodyHeight / needed);
+    });
+
+    function periodHeading(period) {
+        if (period === 4) return "JATKOAIKA";
+        if (period === 5) return "RANGAISTUSLAUKAUKSET";
+        return `${period}. ERÄ`;
+    }
 </script>
 
 <!--
@@ -64,7 +168,46 @@
             class:colon={ch === ":"}>{ch}</span
         >{/each}{/snippet}
 
-<div class="plansi">
+<!--
+  One goal on the timeline. No crest: the side of the spine says which team it
+  was, and both crests are already on the bar above - repeating them on every
+  row spent 40px of width to say nothing new. That width is what lets the
+  scorer and the assist share one line, which is what makes the row a single
+  line tall.
+-->
+{#snippet goalCard(goal)}
+    <span class="tl-card">
+        <span class="tl-scorer">
+            {goal.scorer}{#if goal.tag}<span class="tl-tag">{goal.tag}</span
+                >{/if}
+        </span>
+        {#if goal.assist}
+            <span class="tl-assist">({goal.assist})</span>
+        {/if}
+    </span>
+{/snippet}
+
+<!-- Shirt number to the outside, points to the inside, so the two teams'
+     points columns end up side by side across the gutter and compare. -->
+{#snippet scorerRow(player, side)}
+    <div class="scorer-row" class:away={side === "away"}>
+        <span class="scorer-number"
+            >#{@render fixedDigits(player.number)}</span
+        >
+        <span class="scorer-name">{player.name}</span>
+        <span class="scorer-points"
+            >{@render fixedDigits(
+                `${player.goals}+${player.assists}=${player.points}`,
+            )}</span
+        >
+    </div>
+{/snippet}
+
+<div
+    class="plansi"
+    class:full={!!header || !!body}
+    bind:clientWidth={plansiPx}
+>
     <div class="plansi-bar">
         <div class="plansi-tab">{tabText}</div>
 
@@ -95,6 +238,119 @@
         {/if}
     </div>
 
+    <!--
+      The content area is what is left between the two bars, measured rather
+      than assumed: the composition is pinned top and bottom, so at any frame
+      shape this is the real room the goals have. `plansiPx` converts it back
+      into the 1165-wide design pixels the row metrics are written in.
+    -->
+    {#if body}
+        <div class="plansi-body" bind:clientHeight={bodyPx}>
+            {#if body.kind === "timeline"}
+                <!--
+                  A table, not a stack of floating rows. The goals butt straight
+                  up against each other: the 6px that used to sit between them
+                  was background showing through on every single row, and on a
+                  long match that gap was the single biggest consumer of the
+                  height. Now consecutive goals by the same team merge into one
+                  white block and only a hairline separates them, which is also
+                  how the results service reads.
+
+                  The centre column is the score box's own 198 carried
+                  downwards, so the spine is continuous by construction rather
+                  than by a line drawn behind the rows.
+                -->
+                <table
+                    class="timeline"
+                    style="--fit: {timelineFit}"
+                >
+                    <colgroup>
+                        <col />
+                        <col class="tl-spine-col" />
+                        <col />
+                    </colgroup>
+                    <tbody>
+                        {#each groups as group (group.period)}
+                            <tr class="tl-period">
+                                <td colspan="3">{periodHeading(group.period)}</td
+                                >
+                            </tr>
+
+                            {#each group.goals as goal (goal.time + goal.score)}
+                                <tr class="tl-row">
+                                    <td
+                                        class="tl-side home"
+                                        class:filled={goal.side === "home"}
+                                    >
+                                        {#if goal.side === "home"}
+                                            {@render goalCard(goal)}
+                                        {/if}
+                                    </td>
+
+                                    <td class="tl-node">
+                                        <span class="tl-node-inner">
+                                            <span class="tl-time"
+                                                >{@render fixedDigits(
+                                                    goal.time,
+                                                )}</span
+                                            >
+                                            <span class="tl-score"
+                                                >{@render fixedDigits(
+                                                    goal.score,
+                                                )}</span
+                                            >
+                                        </span>
+                                    </td>
+
+                                    <td
+                                        class="tl-side away"
+                                        class:filled={goal.side === "away"}
+                                    >
+                                        {#if goal.side === "away"}
+                                            {@render goalCard(goal)}
+                                        {/if}
+                                    </td>
+                                </tr>
+                            {/each}
+                        {/each}
+                    </tbody>
+                </table>
+            {:else if body.kind === "stats"}
+                <div class="stats">
+                    {#each body.stats ?? [] as row (row.label)}
+                        <div class="stat-row">
+                            <span class="stat-value"
+                                >{@render fixedDigits(row.home)}</span
+                            >
+                            <span class="stat-label">{row.label}</span>
+                            <span class="stat-value"
+                                >{@render fixedDigits(row.away)}</span
+                            >
+                        </div>
+                    {/each}
+
+                    <div class="stats-heading">
+                        <span class="section-pill">MAALIT JA SYÖTÖT</span>
+                    </div>
+
+                    <div class="scorers">
+                        <div class="scorer-column">
+                            {#each body.scorers?.home ?? [] as player (player.number + player.name)}
+                                {@render scorerRow(player, "home")}
+                            {/each}
+                        </div>
+
+                        <div class="scorer-column away">
+                            {#each body.scorers?.away ?? [] as player (player.number + player.name)}
+                                {@render scorerRow(player, "away")}
+                            {/each}
+                        </div>
+                    </div>
+                </div>
+            {/if}
+        </div>
+    {/if}
+
     {#if strip?.kind === "break"}
         <div class="plansi-break">
             <div class="plansi-break-brand">
@@ -119,6 +375,22 @@
             </span>
         </div>
     {/if}
+
+    {#if header}
+        <div class="plansi-break plansi-header">
+            <div class="plansi-break-brand">
+                <InssiDivariLogo />
+            </div>
+
+            {#if header.countdown}
+                <div class="plansi-break-countdown">
+                    {@render fixedDigits(header.countdown)}
+                </div>
+            {/if}
+
+            <div class="plansi-break-label">{header.label}</div>
+        </div>
+    {/if}
 </div>
 
 <style>
@@ -138,6 +410,42 @@
         font-family: "Nineties Headliner", "Arial Black", Arial, sans-serif;
         user-select: none;
         cursor: none;
+    }
+
+    /* Full-screen variants. The column keeps its width and its centre line and
+       gains a bottom edge: the score bar moves up to the top of the picture and
+       the wordmark bar stays where every plansi has always put it, so the two
+       bracket the data instead of stacking above it. y60 to y1025 of 1080. */
+    .plansi.full {
+        display: flex;
+        flex-direction: column;
+        top: 5.556%; /* 60 - the tab's top edge */
+        bottom: 5.093%; /* 1025 */
+    }
+
+    /* Room for the tab, which hangs off the top of the bar here as on every
+       other plansi and would otherwise overflow the frame. */
+    .plansi.full .plansi-bar {
+        flex-shrink: 0;
+        margin-top: 2.656vw; /* 51 */
+    }
+
+    /* Pinned to the bottom edge whatever the content above it does. */
+    .plansi.full .plansi-header {
+        margin-top: 0.625vw; /* 12 */
+        flex-shrink: 0;
+    }
+
+    /* Everything left between the two bars. `flex-basis: 0` with the overflow
+       hidden is what makes the measurement safe: the area's height comes only
+       from the frame, never from the rows inside it, so scaling the rows to the
+       measured height cannot feed back into the measurement. */
+    .plansi-body {
+        flex: 1 1 0;
+        min-height: 0;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
     }
 
     .plansi-bar {
@@ -334,6 +642,347 @@
 
     .plansi-scorer,
     .plansi-assist {
+        line-height: 1;
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Intermission timeline
+     * ---------------------------------------------------------------- */
+
+    /* `--fit` drives the vertical rhythm and the type, and touches neither
+       column: the spine has to stay the score box's own 198 at
+       every scale, and a long match then simply gains horizontal room for the
+       names as it loses height. */
+    .timeline {
+        width: 100%;
+        table-layout: fixed;
+        /* Separated with zero spacing rather than collapsed. Every rule below
+           is drawn with an inset shadow, which costs no layout at all, so the
+           table's height is exactly the sum of its row heights and the fitting
+           arithmetic stays exact. Collapsed borders add a fraction of a pixel
+           per row, which over twenty rows is a clipped goal. */
+        border-collapse: separate;
+        border-spacing: 0;
+    }
+
+    /* The browser's own stylesheet gives every cell 1px of padding, and a
+       cell's `height` is its content box - so without this every row came out
+       two pixels taller than it was told to be, and twenty rows of that is a
+       goal clipped off the bottom. */
+    .timeline td {
+        padding: 0;
+    }
+
+    .tl-spine-col {
+        width: 10.313vw; /* 198 - the score box, carried down */
+    }
+
+    /* The period reads as a section rule across the whole table rather than a
+       pill on the spine: with the rows butted together there is no gap left for
+       a pill to float in, and a full-width band divides the match more clearly
+       anyway. */
+    .tl-period td {
+        height: calc(var(--fit, 1) * 1.25vw); /* 24 */
+        /* line-height, not height, is what a table cell honours exactly */
+        line-height: calc(var(--fit, 1) * 1.25vw);
+        background: #7e66bd;
+        color: #fff;
+        font-family: "Urbanist", Arial, sans-serif;
+        font-weight: 700;
+        font-size: calc(var(--fit, 1) * 0.781vw); /* 15 */
+        letter-spacing: 0.08em;
+        text-align: center;
+        vertical-align: middle;
+    }
+
+    /* Every cell's content is a block-level flex box, so the cell generates no
+       line box of its own. That matters: an inline child sits on a line box
+       that can end up a pixel or two taller than the height asked for, and over
+       twenty rows those pixels are a goal clipped off the bottom. With no line
+       box the used height is exactly the height declared, and the fitting
+       arithmetic is exact. */
+    .tl-row td {
+        height: calc(var(--fit, 1) * 2.083vw); /* 40 */
+        line-height: 1;
+        vertical-align: middle;
+    }
+
+    /* Only the side that scored is painted. Consecutive goals by one team then
+       read as a single white block, which is the whole point of dropping the
+       gaps. */
+    .tl-side.filled {
+        background: #fff;
+        box-shadow: inset 0 -1px 0 rgba(84, 44, 140, 0.18);
+    }
+
+    .tl-row:last-child .tl-side.filled {
+        box-shadow: none;
+    }
+
+    /* Time and score on one line. Stacked, they cost a two-line row height on
+       every goal for the sake of two short numbers. */
+    /* The spine's own edges are inset shadows too, so the centre column stays
+       exactly the score box's 198 instead of 198 plus two borders. */
+    .tl-node {
+        background: #542c8c;
+        box-shadow:
+            inset 0.156vw 0 0 #7e66bd,
+            inset -0.156vw 0 0 #7e66bd,
+            inset 0 -1px 0 rgba(255, 255, 255, 0.16);
+        color: #fff;
+        text-align: center;
+        white-space: nowrap;
+    }
+
+    .tl-row:last-child .tl-node {
+        box-shadow:
+            inset 0.156vw 0 0 #7e66bd,
+            inset -0.156vw 0 0 #7e66bd;
+    }
+
+    .tl-node-inner {
+        display: flex;
+        align-items: baseline;
+        justify-content: center;
+    }
+
+    .tl-time {
+        display: inline-block;
+        line-height: 1;
+        margin-right: calc(var(--fit, 1) * 0.625vw); /* 12 */
+        font-family: "Urbanist", Arial, sans-serif;
+        font-weight: 700;
+        font-size: calc(var(--fit, 1) * 0.885vw); /* 17 */
+    }
+
+    .tl-score {
+        display: inline-block;
+        line-height: 1;
+        font-size: calc(var(--fit, 1) * 1.094vw); /* 21 */
+    }
+
+    .tl-side {
+        padding: 0 calc(var(--fit, 1) * 0.729vw); /* 14 */
+        overflow: hidden;
+    }
+
+    /* The names keep the same 25 off the spine that the bar's team names keep
+       off the score box, so the two line up and neither crowds the middle. */
+    .tl-side.home {
+        padding-right: calc(var(--fit, 1) * 1.302vw); /* 25 */
+    }
+
+    .tl-side.away {
+        padding-left: calc(var(--fit, 1) * 1.302vw); /* 25 */
+    }
+
+
+
+    /* Scorer and assist read inwards, ending against the spine, so a name sits
+       beside the time and score it belongs to and lines up under the team name
+       in the bar above. */
+    .tl-card {
+        display: flex;
+        align-items: baseline;
+        justify-content: flex-end;
+        gap: calc(var(--fit, 1) * 0.417vw); /* 8 */
+        min-width: 0;
+        font-family: "Urbanist", Arial, sans-serif;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+    }
+
+    /* The away side reads from the spine outwards rather than mirroring the
+       home one: mirroring would put the assist in front of the scorer, and the
+       eye still reads left to right on both sides of the picture. So the home
+       side's assist ends against the spine and the away side's scorer starts
+       against it, and both rows read scorer-then-assist. */
+    .tl-side.away .tl-card {
+        justify-content: flex-start;
+    }
+
+    .tl-scorer {
+        flex-shrink: 0;
+        color: #0a0a0a;
+        font-weight: 700;
+        font-size: calc(var(--fit, 1) * 0.99vw); /* 19 */
+        white-space: nowrap;
+    }
+
+    /* The assist is the brand purple rather than a grey: it reads as clearly
+       subordinate to the near-black scorer while still belonging to the
+       graphic, and holds far more contrast on white than #7e66bd would. It is
+       also what gives way first when a row runs out of room. */
+    .tl-assist {
+        min-width: 0;
+        color: #542c8c;
+        font-weight: 700;
+        font-size: calc(var(--fit, 1) * 0.833vw); /* 16 */
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* YV / AV / TM / RL / IM, as the match card tags the goal */
+    .tl-tag {
+        margin-left: 0.417vw; /* 8 */
+        padding: 0.104vw 0.26vw;
+        background: #542c8c;
+        border-radius: 0.156vw;
+        color: #fff;
+        font-size: calc(var(--fit, 1) * 0.677vw);  /* 13 */
+        letter-spacing: 0.04em;
+        vertical-align: middle;
+    }
+
+    /* ---------------------------------------------------------------- *
+     * Result statistics
+     * ---------------------------------------------------------------- */
+
+
+
+    /* The comparison row is the score bar's construction reused: a white bar
+       with a bordered purple box at each end, label centred between them. */
+    .stats {
+        margin-top: 1.042vw; /* 20 */
+    }
+
+    .stat-row {
+        display: grid;
+        grid-template-columns: 5.521vw 1fr 5.521vw; /* 106 */
+        align-items: stretch;
+        height: 3.958vw; /* 76 */
+        margin-bottom: 0.521vw; /* 10 */
+        background: #fff;
+        border-radius: 0.417vw; /* 8 */
+    }
+
+    .stat-value {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        background: #542c8c;
+        border: 0.156vw solid #7e66bd; /* 3 */
+        border-radius: 0.417vw 0 0 0.417vw;
+        color: #fff;
+        font-size: 1.771vw; /* 34 */
+        line-height: 1;
+    }
+
+    .stat-value:last-child {
+        border-radius: 0 0.417vw 0.417vw 0;
+    }
+
+    .stat-label {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #0a0a0a;
+        font-family: "Urbanist", Arial, sans-serif;
+        font-weight: 700;
+        font-size: 1.25vw; /* 24 */
+        line-height: 1;
+        letter-spacing: 0.04em;
+    }
+
+    .stats-heading {
+        display: flex;
+        justify-content: center;
+        margin-top: 1.563vw; /* 30 */
+        margin-bottom: 0.521vw; /* 10 */
+    }
+
+    .section-pill {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 10.313vw; /* 198 - the spine width */
+        height: 1.458vw; /* 28 */
+        padding: 0 0.833vw; /* 16 */
+        box-sizing: border-box;
+        background: #7e66bd;
+        border-radius: 0.208vw; /* 4 */
+        color: #fff;
+        font-family: "Urbanist", Arial, sans-serif;
+        font-weight: 700;
+        font-size: 0.885vw; /* 17 */
+        line-height: 1;
+        letter-spacing: 0.04em;
+        white-space: nowrap;
+    }
+
+    /* Two columns with the spine's own gutter between them, so the block lines
+       up with the timeline on the other plansi. */
+    .scorers {
+        display: grid;
+        grid-template-columns: 1fr 1.25vw 1fr; /* 24 gutter */
+    }
+
+    .scorer-column {
+        grid-column: 1;
+    }
+
+    .scorer-column.away {
+        grid-column: 3;
+    }
+
+    .scorer-row {
+        display: flex;
+        align-items: center;
+        height: 3.333vw; /* 64 */
+        margin-bottom: 0.417vw; /* 8 */
+        background: #fff;
+        border-radius: 0.417vw; /* 8 */
+        overflow: hidden;
+    }
+
+    .scorer-row.away {
+        flex-direction: row-reverse;
+    }
+
+    .scorer-number {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        width: 4.167vw; /* 80 */
+        color: #542c8c;
+        font-size: 1.146vw; /* 22 */
+        line-height: 1;
+    }
+
+    .scorer-name {
+        flex: 1;
+        min-width: 0;
+        padding: 0 0.521vw; /* 10 */
+        color: #0a0a0a;
+        font-family: "Urbanist", Arial, sans-serif;
+        font-weight: 700;
+        font-size: 1.042vw; /* 20 */
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .scorer-row.away .scorer-name {
+        text-align: right;
+    }
+
+    .scorer-points {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        align-self: stretch;
+        flex-shrink: 0;
+        width: 6.771vw; /* 130 */
+        box-sizing: border-box;
+        background: #542c8c;
+        border: 0.156vw solid #7e66bd; /* 3 */
+        color: #fff;
+        font-size: 1.25vw; /* 24 */
         line-height: 1;
     }
 </style>
